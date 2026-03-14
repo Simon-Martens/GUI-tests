@@ -37,10 +37,6 @@ pub struct Rect {
 }
 
 impl Rect {
-    pub fn new(min: Vec2, max: Vec2) -> Self {
-        Self { min, max }
-    }
-
     pub fn from_min_size(min: Vec2, size: Vec2) -> Self {
         Self {
             min,

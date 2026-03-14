@@ -23,8 +23,6 @@ struct App {
     gpu: Option<GpuState>,
     input: InputState,
     memory: UiMemory,
-    repaint_pending: bool,
-    repaint_next_frame: bool,
     frames: u64,
 }
 
@@ -42,7 +40,6 @@ impl ApplicationHandler for App {
         self.window_id = Some(window.id());
         self.gpu = Some(pollster::block_on(GpuState::new(window.clone())).expect("init gpu"));
         self.window = Some(window);
-        self.repaint_pending = true;
     }
 
     fn window_event(
@@ -61,17 +58,14 @@ impl ApplicationHandler for App {
                 if let Some(gpu) = &mut self.gpu {
                     gpu.resize(size);
                 }
-                self.repaint_pending = true;
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 if let (Some(gpu), Some(window)) = (&mut self.gpu, &self.window) {
                     gpu.resize(window.inner_size());
                 }
-                self.repaint_pending = true;
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.input.mouse_pos = Vec2::new(position.x as f32, position.y as f32);
-                self.repaint_pending = true;
             }
             WindowEvent::MouseInput {
                 state,
@@ -82,13 +76,11 @@ impl ApplicationHandler for App {
                     self.input.mouse_down = true;
                     self.input.mouse_pressed = true;
                     self.input.press_pos = Some(self.input.mouse_pos);
-                    self.repaint_pending = true;
                 }
                 ElementState::Released => {
                     self.input.mouse_down = false;
                     self.input.mouse_released = true;
                     self.input.release_pos = Some(self.input.mouse_pos);
-                    self.repaint_pending = true;
                 }
             },
             WindowEvent::RedrawRequested => self.redraw(),
@@ -97,13 +89,9 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        event_loop.set_control_flow(ControlFlow::Wait);
-        if self.repaint_pending || self.repaint_next_frame {
-            self.repaint_pending = false;
-            self.repaint_next_frame = false;
-            if let Some(window) = &self.window {
-                window.request_redraw();
-            }
+        event_loop.set_control_flow(ControlFlow::Poll);
+        if let Some(window) = &self.window {
+            window.request_redraw();
         }
     }
 }
@@ -124,8 +112,9 @@ impl App {
             &self.input,
             Vec2::new(size.width as f32, size.height as f32),
         );
-        let needs_follow_up = build_demo(&mut ui, self.frames);
+        build_demo(&mut ui, self.frames);
         let draw_list = ui.finish();
+        self.memory.end_frame();
 
         match gpu.render(&draw_list) {
             Ok(()) => {}
@@ -135,14 +124,11 @@ impl App {
             Err(wgpu::SurfaceError::OutOfMemory) => return,
             Err(wgpu::SurfaceError::Timeout | wgpu::SurfaceError::Other) => {}
         }
-
-        self.repaint_next_frame = needs_follow_up;
         self.input.end_frame();
     }
 }
 
-fn build_demo(ui: &mut Ui<'_>, frames: u64) -> bool {
-    let mut needs_follow_up = false;
+fn build_demo(ui: &mut Ui<'_>, frames: u64) {
     let screen = Rect::from_min_size(Vec2::ZERO, ui.screen_size);
     ui.fill(screen, rgb(0.08, 0.09, 0.11));
     ui.text(
@@ -152,31 +138,20 @@ fn build_demo(ui: &mut Ui<'_>, frames: u64) -> bool {
         rgb(0.76, 0.80, 0.84),
     );
 
-    let left_count = ui.counter("left_count");
-    let right_count = ui.counter("right_count");
-
-    let outer = Rect::from_min_size(
+    let count = ui.counter("button_count");
+    ui.begin_root_panel(
+        "panel",
         Vec2::new(
-            ui.screen_size.x * 0.5 - 150.0,
-            ui.screen_size.y * 0.5 - 120.0,
+            ui.screen_size.x * 0.5 - 110.0,
+            ui.screen_size.y * 0.5 - 55.0,
         ),
-        Vec2::new(300.0, 240.0),
+        18.0,
+        12.0,
+        rgb(0.14, 0.16, 0.20),
     );
-    ui.begin_root_panel("outer", outer, 18.0, 12.0, rgb(0.14, 0.16, 0.20));
-    ui.label("OUTER");
-    ui.begin_child_panel("inner", 146.0, 14.0, 12.0, rgb(0.18, 0.20, 0.24));
-    ui.label("INNER");
-
-    if ui.button("left", &format!("LEFT {left_count}")) {
-        ui.bump_counter("left_count");
-        needs_follow_up = true;
+    ui.label("WIDTH FROM CHILDREN");
+    if ui.button("button", &format!("BUTTON {count}")) {
+        ui.bump_counter("button_count");
     }
-    if ui.button("right", &format!("RIGHT {right_count}")) {
-        ui.bump_counter("right_count");
-        needs_follow_up = true;
-    }
-
     ui.end_panel();
-    ui.end_panel();
-    needs_follow_up
 }
