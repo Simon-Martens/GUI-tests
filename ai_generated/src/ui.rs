@@ -3,6 +3,7 @@ use std::hash::{Hash, Hasher};
 
 use crate::geom::{Color, Rect, Vec2, rgb};
 use crate::gpu::DrawCmd;
+use crate::text;
 
 #[derive(Default)]
 pub struct InputState {
@@ -391,5 +392,5 @@ fn emit_draws(nodes: &[Node], memory: &mut UiMemory, index: usize, draw: &mut Ve
 }
 
 fn text_size(text: &str, scale: f32) -> Vec2 {
-    Vec2::new(text.chars().count() as f32 * 6.0 * scale, 7.0 * scale)
+    text::measure(text, scale)
 }

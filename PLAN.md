@@ -1,0 +1,209 @@
+# Beginner Rebuild Plan for `handarbeit/`
+
+## Summary
+Rebuild the `ai_generated/` example in `handarbeit/` as a sequence of 6 larger milestones, each ending in a running example. The teaching order should favor visible progress and low conceptual load first, then introduce the harder architectural ideas once the learner already has a window, drawing, input, and text working.
+
+The final state should match the current `ai_generated/` crate in spirit:
+- window + event loop
+- rectangle renderer
+- real text measurement/rendering with FreeType + HarfBuzz
+- immediate-mode UI rebuild each frame
+- stable widget IDs and retained per-widget cache
+- child-driven layout with separate sizing and placement passes
+
+Defaults chosen for this plan:
+- 5-6 larger steps
+- real text introduced midway
+
+## Milestones
+
+### Step 1 — Window, event loop, and clear color
+Goal: replace `Hello, world!` with a real native window and a render loop.
+
+Implement:
+- Add `winit`, `wgpu`, and `pollster`.
+- Create a small `App`/`GpuState` shape similar to the reference, but only enough to:
+  - open a window
+  - initialize `wgpu`
+  - handle resize
+  - redraw continuously
+  - clear to a solid background color
+- Keep all code in a very small set of files at first: `main.rs` plus one GPU/app helper module if needed.
+
+Running result:
+- A window opens and continuously redraws with a stable background color.
+
+What the learner should understand after this step:
+- what `winit` does
+- why `wgpu` setup is async
+- why `pollster::block_on` exists
+- the basic event loop / redraw flow
+
+### Step 2 — First rectangle and minimal 2D geometry
+Goal: draw visible geometry before introducing any UI abstraction.
+
+Implement:
+- Add a tiny geometry layer:
+  - `Vec2`
+  - `Rect`
+  - `Color`
+  - screen-to-NDC conversion
+- Add a minimal rectangle draw path in the GPU module:
+  - `DrawCmd::Rect`
+  - a vertex type
+  - CPU tessellation of rectangles into triangles
+- Hardcode one or two rectangles from `main` or a tiny demo function.
+
+Running result:
+- A window with one or two colored rectangles drawn in fixed positions.
+
+What the learner should understand:
+- the difference between app logic and draw commands
+- CPU-side tessellation into GPU vertices
+- why a simple immediate draw list is useful
+
+### Step 3 — Real text, introduced with FreeType + HarfBuzz
+Goal: get rid of fake text early enough that later layout uses real font metrics.
+
+Implement:
+- Add `freetype-rs` and `harfbuzz_rs_now`.
+- Add a `text` module that:
+  - loads one known font file from the system
+  - shapes text with HarfBuzz
+  - rasterizes glyph bitmaps with FreeType
+  - measures text width/height from shaped glyphs
+- Keep rendering simple:
+  - convert glyph bitmap pixels into many tiny rects
+  - continue using the existing rectangle renderer
+- Add `DrawCmd::Text`.
+- Replace any hardcoded bitmap-font logic with real shaping/rasterization.
+
+Running result:
+- The window shows a rectangle plus real font-rendered text.
+
+What the learner should understand:
+- FreeType vs HarfBuzz responsibilities
+- why text measurement must come from the same system that renders text
+- that this is intentionally a simple but inefficient text renderer
+
+### Step 4 — Mouse input and a first interactive button
+Goal: make the app feel alive before introducing the full retained/immediate architecture.
+
+Implement:
+- Add per-frame mouse input state:
+  - cursor position
+  - mouse down
+  - pressed this frame
+  - released this frame
+- Build one manual button with:
+  - a fixed rectangle
+  - hover/pressed color changes
+  - click detection
+  - a counter or status text that changes when clicked
+- Do not introduce IDs or retained widget cache yet.
+- Keep the button demo straightforward and explicit.
+
+Running result:
+- A clickable button changes appearance on hover/press and updates a visible count or label.
+
+What the learner should understand:
+- frame-based input handling
+- the difference between hover, active press, and click
+- how immediate interaction can work even before a UI system exists
+
+### Step 5 — Immediate-mode UI scaffolding and retained widget identity
+Goal: transition from manual demo code to the article’s core idea: rebuild every frame, keep widget state separately.
+
+Implement:
+- Introduce a small `ui` module with:
+  - `Ui`
+  - `UiMemory`
+  - stable widget IDs derived from string sources
+- Convert the manual button into `ui.button("button", ...)`.
+- Add a retained per-widget cache keyed by widget ID.
+- Store at least:
+  - last touched frame
+  - last known rect
+- Use the retained rect for interaction on subsequent frames.
+- Keep layout simple for this step:
+  - manual positions or one root panel with fixed origin
+  - no child-driven sizing yet
+
+Running result:
+- The same button now comes from a small immediate-mode UI API rebuilt each frame.
+- Widget identity persists across frames through the retained cache.
+
+What the learner should understand:
+- stable widget identity
+- why the UI tree is rebuilt every frame
+- why retained state lives outside the transient build code
+
+### Step 6 — Tree build, child-sized layout, and final article-shaped demo
+Goal: implement the part that makes the article’s layout story real.
+
+Implement:
+- Change `Ui` from emitting commands directly to building a small node tree first.
+- Add node kinds for at least:
+  - root panel
+  - label
+  - button
+  - free rect / free text if still needed for the frame counter and background
+- Run layout in two passes:
+  - bottom-up size computation
+  - top-down placement
+- For panels, compute width from children:
+  - width = widest child + horizontal padding
+  - height = summed child heights + spacing + vertical padding
+- Keep the demo intentionally small:
+  - frame counter outside the panel
+  - one root panel
+  - one label
+  - one button whose text width changes as the count grows
+- End at the same conceptual state as `ai_generated/`.
+
+Running result:
+- The panel width visibly depends on its children.
+- The button label changes with the counter.
+- The UI is rebuilt every frame while retained widget state survives across frames.
+
+What the learner should understand:
+- why child-driven sizing requires a separate pass
+- why a tree is useful even in an immediate-mode system
+- how the retained cache and the per-frame tree solve different problems
+
+## Implementation Notes
+Use the same `handarbeit/` crate throughout. Each step should build on the previous one rather than creating separate crates.
+
+Recommended module growth over time:
+- Step 1: `main.rs`, maybe `app.rs`/`gpu.rs`
+- Step 2: add `geom.rs`
+- Step 3: add `text.rs`
+- Step 5: add `ui.rs`
+- Step 6: keep the same modules, but change `ui.rs` from direct emission to tree + layout passes
+
+Dependency introduction order:
+- Step 1: `winit`, `wgpu`, `pollster`
+- Step 2: `bytemuck`
+- Step 3: `freetype-rs`, `harfbuzz_rs_now`
+
+Keep every step runnable with `cargo run` from `handarbeit/`.
+
+## Test / Acceptance Criteria
+For each milestone:
+- `cargo check` passes
+- `cargo run` opens a working window in a graphical environment
+- the new visible behavior for that step is clearly demonstrable
+
+Per-step acceptance:
+- Step 1: window opens and redraws
+- Step 2: at least one rectangle is visible
+- Step 3: text renders from a real font and is measurably wider than the old bitmap approach
+- Step 4: button hover/press/click works
+- Step 5: widget interaction still works after converting to stable IDs + retained cache
+- Step 6: panel width changes based on child content
+
+## Assumptions
+- `handarbeit/` is the learning crate and will be built up incrementally from empty.
+- `ai_generated/` remains the reference implementation to compare against, not the teaching target.
+- The learner is a very early beginner, so each milestone should prioritize one new idea at a time over abstraction purity.
+- Text rendering may remain inefficient in the final hand-coded version if it keeps the architecture understandable.

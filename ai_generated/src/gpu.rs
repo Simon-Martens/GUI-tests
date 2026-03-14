@@ -6,7 +6,7 @@ use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
 use crate::geom::{Color, Rect, Vec2, to_ndc};
-use crate::text::glyph;
+use crate::text;
 
 pub enum DrawCmd {
     Rect {
@@ -209,26 +209,8 @@ fn push_text(
     width: f32,
     height: f32,
 ) {
-    let mut cursor = pos;
-    for ch in text.chars() {
-        let rows = glyph(ch);
-        for (row, bits) in rows.iter().enumerate() {
-            for col in 0..5 {
-                if bits & (1 << (4 - col)) != 0 {
-                    push_rect(
-                        vertices,
-                        Rect::from_min_size(
-                            Vec2::new(cursor.x + col as f32 * scale, cursor.y + row as f32 * scale),
-                            Vec2::splat(scale),
-                        ),
-                        color,
-                        width,
-                        height,
-                    );
-                }
-            }
-        }
-        cursor.x += 6.0 * scale;
+    for glyph_rect in text::rasterize(text, pos, scale, color) {
+        push_rect(vertices, glyph_rect.rect, glyph_rect.color, width, height);
     }
 }
 
