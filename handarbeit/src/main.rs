@@ -1,8 +1,9 @@
+mod geom;
 mod gpu;
 
-use crate::gpu::GpuState;
+use crate::geom::{Rect, Vec2, rgb};
+use crate::gpu::{DrawCmd, GpuState};
 use std::sync::Arc;
-
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -49,6 +50,13 @@ impl ApplicationHandler for App {
         );
 
         self.window_id = Some(window.id());
+        self.pgpu = Some(
+            // INFO: since resumed is a hook from winit, we can't change the function definition to
+            // be async. So we use pollster to just block here until the async function finishes.
+            // Pollster lays the thread to sleep, polls the future and hands over execution back to
+            // the thread once the future is fulfilled.
+            pollster::block_on(GpuState::new(window.clone())).expect("Failed to initialize GPU"),
+        );
         self.window = Some(window);
     }
 
@@ -65,8 +73,32 @@ impl ApplicationHandler for App {
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::Resized(size) => {
+                if let Some(gpu) = &mut self.pgpu {
+                    gpu.resize(size);
+                }
+            }
             // INFO: here we draw, gets scheduled in about_to_wait
-            WindowEvent::RedrawRequested => {}
+            WindowEvent::RedrawRequested => {
+                if let Some(gpu) = &mut self.pgpu {
+                    let draw_list = [DrawCmd::Rect {
+                        rect: Rect::from_min_size(Vec2::new(120.0, 100.0), Vec2::new(220.0, 140.0)),
+                        color: rgb(0.9, 0.7, 0.3),
+                    }];
+                    match gpu.render(&draw_list) {
+                        Ok(_) => {}
+                        Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                            if let Some(window) = &self.window {
+                                gpu.resize(window.inner_size());
+                            }
+                        }
+                        Err(wgpu::SurfaceError::OutOfMemory) => {
+                            event_loop.exit();
+                        }
+                        Err(wgpu::SurfaceError::Timeout | wgpu::SurfaceError::Other) => {}
+                    }
+                }
+            }
             _ => (),
         }
     }

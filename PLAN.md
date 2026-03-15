@@ -171,6 +171,31 @@ What the learner should understand:
 - why a tree is useful even in an immediate-mode system
 - how the retained cache and the per-frame tree solve different problems
 
+### Step 7 — Replace custom math with `glam` and evaluate renderer upgrades
+Goal: swap the tiny hand-written math layer for a real vector math crate after the core UI architecture is already understood, then briefly evaluate what a more production-like rendering path could look like.
+
+Implement:
+- Add `glam`.
+- Replace the custom `Vec2` type with `glam::Vec2`.
+- Update geometry, GPU, text, and UI code to use `glam` vector operations.
+- Keep `Rect` as a small local type unless using a crate-backed rectangle abstraction is clearly better.
+- Do not change the overall UI architecture in this step; this is a math-layer refactor only.
+- As a follow-up exploration, inspect what it would mean to replace parts of the hand-written renderer with:
+  - `lyon` for path tessellation
+  - `vello` for higher-level GPU vector rendering
+  - Skia as a full rendering backend
+- Keep this exploration separate from the main teaching implementation unless there is a clear decision to migrate.
+
+Running result:
+- The final demo still behaves the same, but uses `glam` for vector math instead of the homemade `Vec2`.
+- There is a short written comparison of what would change if the renderer later moved toward `lyon`, `vello`, or Skia.
+
+What the learner should understand:
+- where a small custom math type is enough for learning
+- when it becomes more practical to adopt a real math crate
+- how to separate a math refactor from architectural changes
+- the difference between a math crate (`glam`), a tessellation library (`lyon`), a vector renderer (`vello`), and a full graphics backend (Skia)
+
 ## Implementation Notes
 Use the same `handarbeit/` crate throughout. Each step should build on the previous one rather than creating separate crates.
 
@@ -185,6 +210,7 @@ Dependency introduction order:
 - Step 1: `winit`, `wgpu`, `pollster`
 - Step 2: `bytemuck`
 - Step 3: `freetype-rs`, `harfbuzz_rs_now`
+- Step 7: `glam`
 
 Keep every step runnable with `cargo run` from `handarbeit/`.
 
@@ -201,6 +227,7 @@ Per-step acceptance:
 - Step 4: button hover/press/click works
 - Step 5: widget interaction still works after converting to stable IDs + retained cache
 - Step 6: panel width changes based on child content
+- Step 7: final demo still works after replacing the custom vector type with `glam::Vec2`
 
 ## Assumptions
 - `handarbeit/` is the learning crate and will be built up incrementally from empty.
