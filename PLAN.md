@@ -17,7 +17,7 @@ Defaults chosen for this plan:
 
 ## Milestones
 
-### Step 1 — Window, event loop, and clear color
+### Step 1 — Window, event loop, and clear color [completed]
 Goal: replace `Hello, world!` with a real native window and a render loop.
 
 Implement:
@@ -39,7 +39,7 @@ What the learner should understand after this step:
 - why `pollster::block_on` exists
 - the basic event loop / redraw flow
 
-### Step 2 — First rectangle and minimal 2D geometry
+### Step 2 — First rectangle and minimal 2D geometry [completed]
 Goal: draw visible geometry before introducing any UI abstraction.
 
 Implement:

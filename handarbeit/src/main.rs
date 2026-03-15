@@ -81,6 +81,7 @@ impl ApplicationHandler for App {
             // INFO: here we draw, gets scheduled in about_to_wait
             WindowEvent::RedrawRequested => {
                 if let Some(gpu) = &mut self.pgpu {
+                    // INFO: drawing happpens through our own control language.
                     let draw_list = [DrawCmd::Rect {
                         rect: Rect::from_min_size(Vec2::new(120.0, 100.0), Vec2::new(220.0, 140.0)),
                         color: rgb(0.9, 0.7, 0.3),

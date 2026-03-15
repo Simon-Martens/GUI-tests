@@ -4,7 +4,15 @@ use std::{error::Error, sync::Arc};
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
-// INFO: these are the vertex/fragment shaders, they get compiled an run on the GPU
+// INFO: these are the vertex/fragment shaders in WGSL, they get compiled an run on the GPU
+// Vertex input is our Vertex type we specified below. Vertex Output is special: every vertex shader
+// must produce a clip position, which is the position of the vertex in a specific coordinate system
+// (NDC).
+// The vertext shader does no transformation on the vertex at all. It just outputs a position in 4D,
+// which is required. W is set to one (the GPU will do x/w, y/w, z/w to get the final position, which
+// allows for some advanced tricks like perspective pojection).
+// The fragment shader is easy: it jsut returns the color we passed in. It gets passed in the vertex
+// shader output. From step 1, becaus ethis is some kind of very easy shader.
 const SHADER: &str = r#"
 struct VertexInput {
   @location(0) position: vec2<f32>,
@@ -30,6 +38,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
+// This is a central part of the code: draw commands are the abstract things we render. All the
+// basic shapes go here. It is good, once the elements get more complex, to have higher order elements.
+// Say a button can consist of text and a Rect.
 pub enum DrawCmd {
     Rect { rect: Rect, color: Color },
 }
@@ -49,6 +60,8 @@ impl Vertex {
     fn layout() -> wgpu::VertexBufferLayout<'static> {
         // INFO: this is the Vertex struct above as described for wgpu
         // or in effect for the GPU, this will become vertex shader input.
+        // It is important to stay in the contraints the CPU gives: a max stride and a max size of
+        // the stuff we can pass in.
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -160,11 +173,15 @@ impl GpuState {
         config.view_formats = vec![format];
         surface.configure(&device, &config);
 
+        // INFO: here we compile the shader in the SHADER var inbt GPU machine code the GPU can
+        // understand and use
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shader"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
         });
 
+        // INFO: here we could define extra resources the shader has access to. group layouts are
+        // extra textures or buffers. Our shader only relies on the vertecies we pass in rn.
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline layout"),
             bind_group_layouts: &[],
@@ -174,8 +191,12 @@ impl GpuState {
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("render pipeline"),
             layout: Some(&pipeline_layout),
+            // INFO: here we spacify the entrypoints for vertex and fragment shaders and pass the
+            // layout of our verticies (the data each Vertex contains). This must also match what
+            // the shader expects and cannot be arbitrary.
             vertex: wgpu::VertexState {
                 module: &shader,
+                // INFO: entry point is the name of the function in the shader compiled above.
                 entry_point: Some("vs_main"),
                 buffers: &[Vertex::layout()],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -183,6 +204,7 @@ impl GpuState {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
+                // INFO: output formats and blend mode
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -190,10 +212,16 @@ impl GpuState {
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
+            // INFO: how verticies become primitves? Here it means that threeconsecutive verticies
+            // make up a triagle shape. Also defaults for culling, fonts, polygon mode etc.
             primitive: wgpu::PrimitiveState::default(),
+            // INFO: depth buffer or stencil buffer, for 3D rendering. What we draw later is always
+            // on top.
             depth_stencil: None,
+            // INFO: no special multisampling
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
+            // INFO: no pipeline cache mode/object is used (???)
             cache: None,
         });
 
@@ -234,7 +262,8 @@ impl GpuState {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        // INFO: we get the vertices to render
+        // INFO: we get the vertices to render from our commands in the draw list. Then we just
+        // create a new vertex buffer from our vertecies.
         let vertices = tessellate(
             draw_list,
             self.config.width as f32,
