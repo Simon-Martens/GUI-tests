@@ -41,6 +41,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 // This is a central part of the code: draw commands are the abstract things we render. All the
 // basic shapes go here. It is good, once the elements get more complex, to have higher order elements.
 // Say a button can consist of text and a Rect.
+// EG. ff webrender has 33 promitives (it had these 6 in '16: rectangle text image border gradient
+// shadow)
 pub enum DrawCmd {
     Rect { rect: Rect, color: Color },
 }
