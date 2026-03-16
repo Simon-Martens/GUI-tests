@@ -4,36 +4,50 @@ use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowAttributes, WindowId};
+use winit::window::{Window as OsWindow, WindowAttributes, WindowId};
 
-use crate::geom::{Rect, Vec2, rgb};
+use crate::geom::Vec2;
 use crate::gpu::GpuState;
-use crate::ui::{InputState, Ui, UiMemory};
+use crate::ui::{InputState, Render, UiAction, UiMemory, Window};
 
-pub fn run() {
+pub fn run<V: Render>(view: V) {
     let event_loop = EventLoop::new().expect("failed to create event loop");
-    let mut app = App::default();
+    let mut app = App::new(view);
     event_loop.run_app(&mut app).expect("failed to run app");
 }
 
-#[derive(Default)]
-struct App {
-    window: Option<Arc<Window>>,
+struct App<V: Render> {
+    window: Option<Arc<OsWindow>>,
     window_id: Option<WindowId>,
     gpu: Option<GpuState>,
     input: InputState,
     memory: UiMemory,
     frames: u64,
+    view: V,
 }
 
-impl ApplicationHandler for App {
+impl<V: Render> App<V> {
+    fn new(view: V) -> Self {
+        Self {
+            window: None,
+            window_id: None,
+            gpu: None,
+            input: InputState::default(),
+            memory: UiMemory::default(),
+            frames: 0,
+            view,
+        }
+    }
+}
+
+impl<V: Render> ApplicationHandler for App<V> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
         }
 
         let attrs = WindowAttributes::default()
-            .with_title("Immediate Mode Parent Stack")
+            .with_title("GPUI-shaped immediate UI")
             .with_inner_size(LogicalSize::new(760.0, 520.0))
             .with_min_inner_size(LogicalSize::new(500.0, 360.0));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
@@ -96,27 +110,40 @@ impl ApplicationHandler for App {
     }
 }
 
-impl App {
+impl<V: Render> App<V> {
     fn redraw(&mut self) {
-        let (gpu, window) = match (&mut self.gpu, &self.window) {
-            (Some(gpu), Some(window)) => (gpu, window),
-            _ => return,
+        let window = match &self.window {
+            Some(window) => window.clone(),
+            None => return,
         };
+        if self.gpu.is_none() {
+            return;
+        }
 
         self.frames += 1;
         self.memory.begin_frame();
 
         let size = window.inner_size();
-        let mut ui = Ui::new(
+        let mut ui_window = Window::new(
             &mut self.memory,
             &self.input,
             Vec2::new(size.width as f32, size.height as f32),
+            self.frames,
         );
-        build_demo(&mut ui, self.frames);
-        let draw_list = ui.finish();
+        let output = ui_window.draw(&mut self.view);
+        let _interaction = output.interaction;
+        let _clicked = output.interaction.clicked;
+
+        for action in output.actions {
+            self.apply_action(action);
+        }
         self.memory.end_frame();
 
-        match gpu.render(&draw_list) {
+        let gpu = match &mut self.gpu {
+            Some(gpu) => gpu,
+            None => return,
+        };
+        match gpu.render(&output.draw_list) {
             Ok(()) => {}
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 gpu.resize(window.inner_size())
@@ -126,32 +153,13 @@ impl App {
         }
         self.input.end_frame();
     }
-}
 
-fn build_demo(ui: &mut Ui<'_>, frames: u64) {
-    let screen = Rect::from_min_size(Vec2::ZERO, ui.screen_size);
-    ui.fill(screen, rgb(0.08, 0.09, 0.11));
-    ui.text(
-        Vec2::new(18.0, 18.0),
-        format!("FRAMES {frames}"),
-        1.6,
-        rgb(0.76, 0.80, 0.84),
-    );
-
-    let count = ui.counter("button_count");
-    ui.begin_root_panel(
-        "panel",
-        Vec2::new(
-            ui.screen_size.x * 0.5 - 110.0,
-            ui.screen_size.y * 0.5 - 55.0,
-        ),
-        18.0,
-        12.0,
-        rgb(0.14, 0.16, 0.20),
-    );
-    ui.label("WIDTH FROM CHILDREN");
-    if ui.button("button", &format!("BUTTON {count}")) {
-        ui.bump_counter("button_count");
+    fn apply_action(&mut self, action: UiAction) {
+        match action {
+            UiAction::Clicked(id) => {
+                let _ = id;
+            }
+            UiAction::BumpInt(id) => self.memory.bump(id),
+        }
     }
-    ui.end_panel();
 }

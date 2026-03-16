@@ -6,7 +6,9 @@ edition = "2024"
 [dependencies]
 bytemuck = { version = "1.24.0", features = ["derive"] }
 freetype-rs = "0.38.0"
+glam = "0.30.5"
 harfbuzz_rs_now = "2.3.2"
 pollster = "0.4.0"
+taffy = "0.7.7"
 wgpu = { version = "27.0.1", features = ["wgsl"] }
 winit = "0.30.12"

@@ -18,6 +18,7 @@ pub enum DrawCmd {
         text: String,
         scale: f32,
         color: Color,
+        clip_rect: Option<Rect>,
     },
 }
 
@@ -194,7 +195,8 @@ fn tessellate(draw_list: &[DrawCmd], width: f32, height: f32) -> Vec<Vertex> {
                 text,
                 scale,
                 color,
-            } => push_text(&mut vertices, *pos, text, *scale, *color, width, height),
+                clip_rect,
+            } => push_text(&mut vertices, *pos, text, *scale, *color, *clip_rect, width, height),
         }
     }
     vertices
@@ -206,11 +208,18 @@ fn push_text(
     text: &str,
     scale: f32,
     color: Color,
+    clip_rect: Option<Rect>,
     width: f32,
     height: f32,
 ) {
     for glyph_rect in text::rasterize(text, pos, scale, color) {
-        push_rect(vertices, glyph_rect.rect, glyph_rect.color, width, height);
+        let Some(rect) = clip_rect
+            .map(|clip| glyph_rect.rect.intersect(clip))
+            .unwrap_or(Some(glyph_rect.rect))
+        else {
+            continue;
+        };
+        push_rect(vertices, rect, glyph_rect.color, width, height);
     }
 }
 

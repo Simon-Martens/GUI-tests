@@ -1,33 +1,9 @@
+pub use glam::Vec2;
+
 pub type Color = [f32; 4];
 
 pub fn rgb(r: f32, g: f32, b: f32) -> Color {
     [r, g, b, 1.0]
-}
-
-#[derive(Clone, Copy, Default)]
-pub struct Vec2 {
-    pub x: f32,
-    pub y: f32,
-}
-
-impl Vec2 {
-    pub const ZERO: Self = Self { x: 0.0, y: 0.0 };
-
-    pub fn new(x: f32, y: f32) -> Self {
-        Self { x, y }
-    }
-
-    pub fn splat(v: f32) -> Self {
-        Self { x: v, y: v }
-    }
-}
-
-impl std::ops::Add for Vec2 {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        Self::new(self.x + rhs.x, self.y + rhs.y)
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -46,6 +22,16 @@ impl Rect {
 
     pub fn width(self) -> f32 {
         self.max.x - self.min.x
+    }
+
+    pub fn height(self) -> f32 {
+        self.max.y - self.min.y
+    }
+
+    pub fn intersect(self, other: Self) -> Option<Self> {
+        let min = Vec2::new(self.min.x.max(other.min.x), self.min.y.max(other.min.y));
+        let max = Vec2::new(self.max.x.min(other.max.x), self.max.y.min(other.max.y));
+        (min.x < max.x && min.y < max.y).then_some(Self { min, max })
     }
 
     pub fn contains(self, point: Vec2) -> bool {
