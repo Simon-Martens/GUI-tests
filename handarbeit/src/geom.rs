@@ -16,8 +16,13 @@ pub struct Vec2 {
 
 impl Vec2 {
     pub const ZERO: Self = Self { x: 0.0, y: 0.0 };
+
     pub fn new(x: f32, y: f32) -> Self {
         Self { x, y }
+    }
+
+    pub fn splat(v: f32) -> Self {
+        Self { x: v, y: v }
     }
 }
 
@@ -44,6 +49,13 @@ impl Rect {
             min,
             max: min + size,
         }
+    }
+
+    pub fn contains(&self, point: Vec2) -> bool {
+        self.min.x <= point.x
+            && point.x <= self.max.x
+            && self.min.y <= point.y
+            && point.y <= self.max.y
     }
 }
 

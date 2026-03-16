@@ -62,7 +62,7 @@ What the learner should understand:
 - CPU-side tessellation into GPU vertices
 - why a simple immediate draw list is useful
 
-### Step 3 — Real text, introduced with FreeType + HarfBuzz
+### Step 3 — Real text, introduced with FreeType + HarfBuzz [completed]
 Goal: get rid of fake text early enough that later layout uses real font metrics.
 
 Implement:
@@ -86,7 +86,7 @@ What the learner should understand:
 - why text measurement must come from the same system that renders text
 - that this is intentionally a simple but inefficient text renderer
 
-### Step 4 — Mouse input and a first interactive button
+### Step 4 — Mouse input and a first interactive button [completed]
 Goal: make the app feel alive before introducing the full retained/immediate architecture.
 
 Implement:
@@ -195,6 +195,79 @@ What the learner should understand:
 - when it becomes more practical to adopt a real math crate
 - how to separate a math refactor from architectural changes
 - the difference between a math crate (`glam`), a tessellation library (`lyon`), a vector renderer (`vello`), and a full graphics backend (Skia)
+
+### Step 8 — Reuse GPU vertex buffers instead of reallocating every frame
+Goal: keep the immediate-mode rebuild model, but make the upload path more realistic by reusing GPU buffers across frames.
+
+Implement:
+- Keep tessellating the draw list every frame on the CPU.
+- Store a persistent vertex buffer in `GpuState`.
+- Track the current vertex capacity separately from the number of vertices used this frame.
+- Replace per-frame `create_buffer_init` allocation with:
+  - `queue.write_buffer(...)` when the existing buffer is large enough
+  - buffer reallocation only when the vertex count exceeds capacity
+- Draw using only the active vertex count for the current frame.
+- Keep the architecture otherwise unchanged; this step is a render-path optimization, not a UI redesign.
+
+Running result:
+- The demo still renders exactly as before.
+- The renderer no longer creates a brand new vertex buffer on every frame unless it needs to grow.
+
+What the learner should understand:
+- why immediate-mode UIs still commonly regenerate geometry every frame
+- why GPU buffer reuse is separate from CPU-side tessellation
+- how capacity-based buffer growth avoids per-frame allocation overhead
+- where this optimization fits in the renderer without changing the higher-level architecture
+
+### Step 9 — Handle shutdown signals and exit cleanly
+Goal: make the app terminate predictably when the process is asked to stop, instead of relying only on window-close behavior.
+
+Implement:
+- Add explicit shutdown handling for normal window close and external termination requests.
+- Track shutdown intent in the app state so the event loop can stop requesting redraws once exit begins.
+- Ensure render/update code stops touching GPU/window state after shutdown has started.
+- Release long-lived app resources in a controlled order during teardown.
+- Test behavior with at least:
+  - normal window close
+  - `SIGINT`
+  - `SIGTERM`
+- Document any platform limitations around signals, event-loop wakeups, or forced termination.
+
+Running result:
+- Closing the window exits cleanly.
+- Sending a normal termination signal causes the app to stop its loop and exit without crashing.
+
+What the learner should understand:
+- the difference between cooperative shutdown and forced termination
+- why GUI apps need to stop scheduling new work before tearing resources down
+- what signals can realistically be handled safely in a Rust/winit app
+- why `SIGKILL` cannot be handled and must be treated differently from catchable signals
+
+### Step 10 — Move text rendering from pixel-rect tessellation to a glyph atlas
+Goal: keep HarfBuzz shaping and FreeType rasterization, but replace the teaching-only per-pixel rectangle path with a more realistic text renderer.
+
+Implement:
+- Keep `text::measure(...)` and shaping logic based on HarfBuzz + FreeType metrics.
+- Rasterize glyph bitmaps with FreeType and cache them in a GPU texture atlas.
+- Store per-glyph atlas metadata:
+  - atlas UV rect
+  - bitmap size
+  - bearing / offset
+  - advance
+- Change text rendering from “one rect per bitmap pixel” to “one textured quad per glyph”.
+- Extend the render pipeline to sample glyph alpha from the atlas in the fragment shader.
+- Batch text quads efficiently while preserving the existing rectangle path for non-text primitives.
+- Decide how atlas growth/eviction should work for this small project and document the tradeoff.
+
+Running result:
+- The app renders the same text as before, but with drastically less geometry.
+- Text rendering cost scales roughly with glyph count, not bitmap pixel count.
+
+What the learner should understand:
+- why the current per-pixel-rect path is useful for learning but not realistic for performance
+- how a glyph atlas separates rasterization cost from draw cost
+- why one quad per glyph is the common simple text-rendering path
+- what new renderer complexity is introduced by textures, UVs, and glyph caching
 
 ## Implementation Notes
 Use the same `handarbeit/` crate throughout. Each step should build on the previous one rather than creating separate crates.

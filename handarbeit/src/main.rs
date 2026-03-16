@@ -1,5 +1,6 @@
 mod geom;
 mod gpu;
+mod text;
 
 use crate::geom::{Rect, Vec2, rgb};
 use crate::gpu::{DrawCmd, GpuState};
@@ -8,6 +9,7 @@ use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
     event::WindowEvent,
+    event::{ElementState, MouseButton},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowAttributes, WindowId},
 };
@@ -29,6 +31,9 @@ struct App {
     window: Option<Arc<Window>>,
     window_id: Option<WindowId>,
     pgpu: Option<GpuState>,
+    input: InputState,
+    button_active: bool,
+    click_count: u32,
 }
 
 impl ApplicationHandler for App {
@@ -82,10 +87,46 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 if let Some(gpu) = &mut self.pgpu {
                     // INFO: drawing happpens through our own control language.
-                    let draw_list = [DrawCmd::Rect {
-                        rect: Rect::from_min_size(Vec2::new(120.0, 100.0), Vec2::new(220.0, 140.0)),
-                        color: rgb(0.9, 0.7, 0.3),
-                    }];
+                    let button_rect =
+                        Rect::from_min_size(Vec2::new(120.0, 100.0), Vec2::new(220.0, 140.0));
+                    let hovered = button_rect.contains(self.input.mouse_pos);
+
+                    if self.input.mouse_pressed && hovered {
+                        self.button_active = true;
+                    }
+
+                    let clicked = self.input.mouse_released && hovered && self.button_active;
+
+                    if self.input.mouse_released {
+                        self.button_active = false;
+                    }
+
+                    if clicked {
+                        self.click_count += 1;
+                    }
+
+                    let button_color = if self.button_active && self.input.mouse_down {
+                        rgb(0.93, 0.74, 0.45)
+                    } else if hovered {
+                        rgb(0.95, 0.82, 0.45)
+                    } else {
+                        rgb(0.9, 0.7, 0.3)
+                    };
+
+                    // This is our layout or at least our DrawList
+                    let draw_list = [
+                        DrawCmd::Rect {
+                            rect: button_rect,
+                            color: button_color,
+                        },
+                        DrawCmd::Text {
+                            pos: button_rect.min + Vec2::new(30.0, 45.0),
+                            text: format!("Clicks {}", self.click_count),
+                            scale: 1.8,
+                            color: rgb(0.08, 0.09, 0.11),
+                        },
+                    ];
+
                     match gpu.render(&draw_list) {
                         Ok(_) => {}
                         Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -97,6 +138,25 @@ impl ApplicationHandler for App {
                             event_loop.exit();
                         }
                         Err(wgpu::SurfaceError::Timeout | wgpu::SurfaceError::Other) => {}
+                    }
+                }
+
+                self.input.end_frame();
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.input.mouse_pos = Vec2::new(position.x as f32, position.y as f32);
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                if button == MouseButton::Left {
+                    match state {
+                        ElementState::Pressed => {
+                            self.input.mouse_down = true;
+                            self.input.mouse_pressed = true;
+                        }
+                        ElementState::Released => {
+                            self.input.mouse_down = false;
+                            self.input.mouse_released = true;
+                        }
                     }
                 }
             }
@@ -115,5 +175,20 @@ impl ApplicationHandler for App {
             // Basically schedules the next frame render
             window.request_redraw();
         }
+    }
+}
+
+#[derive(Default)]
+struct InputState {
+    mouse_pos: Vec2,
+    mouse_down: bool,
+    mouse_pressed: bool,
+    mouse_released: bool,
+}
+
+impl InputState {
+    fn end_frame(&mut self) {
+        self.mouse_pressed = false;
+        self.mouse_released = false;
     }
 }

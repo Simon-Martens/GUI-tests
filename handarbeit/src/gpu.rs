@@ -1,4 +1,5 @@
-use crate::geom::{Color, Rect, to_ndc};
+use crate::geom::{Color, Rect, Vec2, to_ndc};
+use crate::text;
 use bytemuck::{Pod, Zeroable};
 use std::{error::Error, sync::Arc};
 use wgpu::util::DeviceExt;
@@ -44,7 +45,16 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 // EG. ff webrender has 33 promitives (it had these 6 in '16: rectangle text image border gradient
 // shadow)
 pub enum DrawCmd {
-    Rect { rect: Rect, color: Color },
+    Rect {
+        rect: Rect,
+        color: Color,
+    },
+    Text {
+        pos: Vec2,
+        text: String,
+        scale: f32,
+        color: Color,
+    },
 }
 
 #[repr(C)]
@@ -92,6 +102,22 @@ fn tessellate(draw_list: &[DrawCmd], width: f32, height: f32) -> Vec<Vertex> {
         match cmd {
             DrawCmd::Rect { rect, color } => {
                 push_rect(&mut vertices, *rect, *color, width, height);
+            }
+            DrawCmd::Text {
+                pos,
+                text,
+                scale,
+                color,
+            } => {
+                for glyph_rect in text::rasterize(text, *pos, *scale, *color) {
+                    push_rect(
+                        &mut vertices,
+                        glyph_rect.rect,
+                        glyph_rect.color,
+                        width,
+                        height,
+                    );
+                }
             }
         }
     }
@@ -266,6 +292,7 @@ impl GpuState {
 
         // INFO: we get the vertices to render from our commands in the draw list. Then we just
         // create a new vertex buffer from our vertecies.
+        // TODO: here we must reuse the buffers: frame and tesselation buffer
         let vertices = tessellate(
             draw_list,
             self.config.width as f32,
