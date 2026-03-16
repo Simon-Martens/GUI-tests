@@ -111,7 +111,7 @@ What the learner should understand:
 - the difference between hover, active press, and click
 - how immediate interaction can work even before a UI system exists
 
-### Step 5 — Immediate-mode UI scaffolding and retained widget identity
+### Step 5 — Immediate-mode UI scaffolding and retained widget identity [completed]
 Goal: transition from manual demo code to the article’s core idea: rebuild every frame, keep widget state separately.
 
 Implement:
@@ -138,7 +138,7 @@ What the learner should understand:
 - why the UI tree is rebuilt every frame
 - why retained state lives outside the transient build code
 
-### Step 6 — Tree build, child-sized layout, and final article-shaped demo
+### Step 6 — Tree build, child-sized layout, and final article-shaped demo [completed]
 Goal: implement the part that makes the article’s layout story real.
 
 Implement:

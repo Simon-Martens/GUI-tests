@@ -51,6 +51,14 @@ impl Rect {
         }
     }
 
+    pub fn width(self) -> f32 {
+        self.max.x - self.min.x
+    }
+
+    pub fn height(self) -> f32 {
+        self.max.y - self.min.y
+    }
+
     pub fn contains(&self, point: Vec2) -> bool {
         self.min.x <= point.x
             && point.x <= self.max.x
