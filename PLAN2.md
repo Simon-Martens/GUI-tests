@@ -964,3 +964,31 @@ Why this is next:
 - this makes the UI more resistant to short CPU stalls and transient contention
 - for GUI workloads, jumping to the latest state is usually less noticeable than replaying intermediate updates
 - it complements dirty/invalidation-driven redraw instead of replacing it
+
+### Next Step 8. Add Vector Path Primitives and Tessellation
+Goal:
+- support non-rectangular vector primitives without hand-writing custom tessellation code
+- move beyond quads and text sprites when the renderer needs true paths
+
+Implement:
+- a path primitive in the scene or paint output
+- fill and stroke support for paths
+- path tessellation at the render preparation boundary
+- likely use `lyon` for path construction and tessellation instead of maintaining a custom tessellator
+
+Examples of where this helps:
+- custom icons and symbols
+- curved separators or callouts
+- richer borders and outlines
+- underlines or decorations that stop being simple rects
+- arbitrary bezier or polygon content
+
+Rules:
+- this is for vector/path rendering, not for text glyph rendering
+- text should still move toward atlas sprites rather than path tessellation
+- path tessellation output should feed the richer scene/batch model instead of bypassing it
+
+Why this is next:
+- `lyon` is a pragmatic way to add path support without taking on a large geometry algorithm project
+- it becomes much more useful once a richer scene exists
+- it is optional unless the UI starts needing real vector geometry
