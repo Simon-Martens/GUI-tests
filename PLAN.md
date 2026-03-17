@@ -384,6 +384,9 @@ Do not add yet:
 Goal:
 - introduce the element abstraction in the smallest possible working form
 
+Status:
+- complete
+
 Implement in `ui.rs`:
 - `Element`
   - `RequestLayoutState`

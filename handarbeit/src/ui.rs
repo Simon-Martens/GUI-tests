@@ -79,13 +79,111 @@ struct WidgetState {
     last_rect: Option<Rect>,
 }
 
-#[derive(Default)]
-pub struct AnyElement;
+pub trait Element: 'static {
+    type RequestLayoutState: 'static;
+    type PrepaintState: 'static;
+
+    fn request_layout(&mut self, window: &mut Window<'_>) -> Self::RequestLayoutState;
+
+    fn prepaint(
+        &mut self,
+        request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window<'_>,
+    ) -> Self::PrepaintState;
+
+    fn paint(
+        &mut self,
+        request_layout: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
+        window: &mut Window<'_>,
+    );
+}
+
+pub struct Quad {
+    rect: Rect,
+    color: Color,
+}
+
+impl Quad {
+    pub fn new(rect: Rect, color: Color) -> Self {
+        Self { rect, color }
+    }
+}
+
+// Three stage rendering
+// - request_layout: currently trivial, later calculates width and heigt
+// - prepaint: will have to calculate hitboxes and interactove state
+// - paint: actually returns the primitives that graphics can paint
+// Any Element gors through these stages of layouting
+impl Element for Quad {
+    type RequestLayoutState = Rect;
+    type PrepaintState = Rect;
+
+    fn request_layout(&mut self, _window: &mut Window<'_>) -> Self::RequestLayoutState {
+        self.rect
+    }
+
+    fn prepaint(
+        &mut self,
+        request_layout: &mut Self::RequestLayoutState,
+        _window: &mut Window<'_>,
+    ) -> Self::PrepaintState {
+        *request_layout
+    }
+
+    fn paint(
+        &mut self,
+        _request_layout: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
+        window: &mut Window<'_>,
+    ) {
+        window.draw_rect(*prepaint, self.color);
+    }
+}
+
+pub struct AnyElement {
+    quad: Quad,
+    request_layout: Option<<Quad as Element>::RequestLayoutState>,
+    prepaint: Option<<Quad as Element>::PrepaintState>,
+}
 
 impl AnyElement {
-    pub fn new() -> Self {
-        Self
+    pub fn new(quad: Quad) -> Self {
+        Self {
+            quad,
+            request_layout: None,
+            prepaint: None,
+        }
     }
+
+    pub fn request_layout(&mut self, window: &mut Window<'_>) {
+        self.request_layout = Some(self.quad.request_layout(window));
+        self.prepaint = None;
+    }
+
+    pub fn prepaint(&mut self, window: &mut Window<'_>) {
+        let request_layout = self
+            .request_layout
+            .as_mut()
+            .expect("request_layout must run before prepaint");
+        self.prepaint = Some(self.quad.prepaint(request_layout, window));
+    }
+
+    pub fn paint(&mut self, window: &mut Window<'_>) {
+        let request_layout = self
+            .request_layout
+            .as_mut()
+            .expect("request_layout must run before paint");
+        let prepaint = self
+            .prepaint
+            .as_mut()
+            .expect("prepaint must run before paint");
+        self.quad.paint(request_layout, prepaint, window);
+    }
+}
+
+pub fn quad(rect: Rect, color: Color) -> AnyElement {
+    AnyElement::new(Quad::new(rect, color))
 }
 
 #[derive(Clone, Copy, Debug)]

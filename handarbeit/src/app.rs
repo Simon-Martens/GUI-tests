@@ -122,7 +122,10 @@ impl<V: Render> App<V> {
             &self.input,
             Size::new(size.width as f32, size.height as f32),
         );
-        let _root = self.view.render(&mut ui_window);
+        let mut root = self.view.render(&mut ui_window);
+        root.request_layout(&mut ui_window);
+        root.prepaint(&mut ui_window);
+        root.paint(&mut ui_window);
         let draw_list = ui_window.finish();
         self.memory.end_frame();
         self.input.end_frame();
