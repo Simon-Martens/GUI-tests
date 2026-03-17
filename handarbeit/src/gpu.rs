@@ -9,7 +9,10 @@ use crate::geom::{Color, Point, Rect, to_ndc};
 use crate::text;
 
 pub enum DrawCmd {
-    Rect { rect: Rect, color: Color },
+    Rect {
+        rect: Rect,
+        color: Color,
+    },
     Text {
         pos: Point,
         text: String,
@@ -214,7 +217,16 @@ fn tessellate(draw_list: &[DrawCmd], width: f32, height: f32) -> Vec<Vertex> {
                 scale,
                 color,
                 clip_rect,
-            } => push_text(&mut vertices, *pos, text, *scale, *color, *clip_rect, width, height),
+            } => push_text(
+                &mut vertices,
+                *pos,
+                text,
+                *scale,
+                *color,
+                *clip_rect,
+                width,
+                height,
+            ),
         }
     }
 

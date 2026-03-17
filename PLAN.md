@@ -352,6 +352,9 @@ Why this stage exists:
 Goal:
 - create the frame-owned state object
 
+Status:
+- complete
+
 Implement in `ui.rs`:
 - `Window<'a>`
   - references to `UiMemory` and `InputState`

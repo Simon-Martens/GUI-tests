@@ -6,9 +6,9 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window as OsWindow, WindowAttributes, WindowId};
 
-use crate::geom::{Point, Rect, Size, rgb};
-use crate::gpu::{DrawCmd, GpuState};
-use crate::ui::{Render, Window};
+use crate::geom::Size;
+use crate::gpu::GpuState;
+use crate::ui::{InputState, Render, UiMemory, Window};
 
 pub fn run<V: Render>(view: V) {
     let event_loop = EventLoop::new().expect("failed to create event loop");
@@ -20,7 +20,8 @@ struct App<V: Render> {
     window: Option<Arc<OsWindow>>,
     window_id: Option<WindowId>,
     gpu: Option<GpuState>,
-    frame_number: u64,
+    input: InputState,
+    memory: UiMemory,
     view: V,
 }
 
@@ -30,7 +31,8 @@ impl<V: Render> App<V> {
             window: None,
             window_id: None,
             gpu: None,
-            frame_number: 0,
+            input: InputState::default(),
+            memory: UiMemory::default(),
             view,
         }
     }
@@ -102,38 +104,33 @@ impl<V: Render> App<V> {
     // to render.
     fn redraw(&mut self) {
         let window = match &self.window {
-            Some(window) => window,
+            Some(window) => window.clone(),
             None => return,
         };
+        if self.gpu.is_none() {
+            return;
+        }
+
+        let size = window.inner_size();
+        self.memory.begin_frame();
+        // Window is frame-loacal data to pass to the render fucntion:
+        // - input state
+        // - window data (currently just wxh)
+        // - the memory of ui elements of last state
+        let mut ui_window = Window::new(
+            &mut self.memory,
+            &self.input,
+            Size::new(size.width as f32, size.height as f32),
+        );
+        let _root = self.view.render(&mut ui_window);
+        let draw_list = ui_window.finish();
+        self.memory.end_frame();
+        self.input.end_frame();
+
         let gpu = match &mut self.gpu {
             Some(gpu) => gpu,
             None => return,
         };
-
-        let size = window.inner_size();
-        self.frame_number += 1;
-        let mut ui_window = Window::new(Size::new(size.width as f32, size.height as f32), self.frame_number);
-        let _root = self.view.render(&mut ui_window);
-        let draw_list = vec![
-            DrawCmd::Rect {
-                rect: Rect::from_origin_and_size(
-                    Point::origin(),
-                    Size::new(size.width as f32, size.height as f32),
-                ),
-                color: rgb(0.08, 0.09, 0.11),
-            },
-            DrawCmd::Rect {
-                rect: Rect::from_origin_and_size(Point::new(36.0, 72.0), Size::new(96.0, 56.0)),
-                color: rgb(0.82, 0.29, 0.24),
-            },
-            DrawCmd::Text {
-                pos: Point::new(36.0, 144.0),
-                text: "DRAWN FROM app.rs".to_string(),
-                scale: 1.4,
-                color: rgb(0.90, 0.92, 0.95),
-                clip_rect: None,
-            },
-        ];
 
         match gpu.render(&draw_list) {
             Ok(()) => {}
