@@ -1,6 +1,11 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
+use taffy::prelude::{
+    AvailableSpace, NodeId, Position, Rect as TaffyRect, Size as TaffySize, Style, TaffyTree,
+    auto, length,
+};
+
 use crate::geom::{Color, Point, Rect, Size};
 use crate::gpu::DrawCmd;
 
@@ -79,9 +84,6 @@ struct WidgetState {
     last_rect: Option<Rect>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct NodeId(u64);
-
 // Three stage rendering
 // - request_layout: currently trivial, later calculates width and heigt
 // - prepaint: will have to calculate hitboxes and interactove state
@@ -95,9 +97,10 @@ pub trait Element: 'static {
 
     fn prepaint(
         &mut self,
+        bounds: Rect,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window<'_>,
-    ) -> (Rect, Self::PrepaintState);
+    ) -> Self::PrepaintState;
 
     fn paint(
         &mut self,
@@ -120,29 +123,33 @@ impl Quad {
 }
 
 impl Element for Quad {
-    type RequestLayoutState = Rect;
-    type PrepaintState = Rect;
+    type RequestLayoutState = ();
+    type PrepaintState = ();
 
     fn request_layout(&mut self, window: &mut Window<'_>) -> (NodeId, Self::RequestLayoutState) {
-        (window.alloc_node_id(), self.rect)
+        let node_id = window
+            .taffy
+            .new_leaf(absolute_leaf_style(self.rect.min, self.rect.size()))
+            .expect("create quad layout node");
+        (node_id, ())
     }
 
     fn prepaint(
         &mut self,
-        request_layout: &mut Self::RequestLayoutState,
+        _bounds: Rect,
+        _request_layout: &mut Self::RequestLayoutState,
         _window: &mut Window<'_>,
-    ) -> (Rect, Self::PrepaintState) {
-        (*request_layout, *request_layout)
+    ) -> Self::PrepaintState {
+        ()
     }
 
     fn paint(
         &mut self,
         bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
-        prepaint: &mut Self::PrepaintState,
+        _prepaint: &mut Self::PrepaintState,
         window: &mut Window<'_>,
     ) {
-        let _ = prepaint;
         window.draw_rect(bounds, self.color);
     }
 }
@@ -165,12 +172,12 @@ impl AnyElement {
         }
     }
 
-    fn request_layout(&mut self, window: &mut Window<'_>) {
-        self.inner.request_layout(window);
+    fn request_layout(&mut self, window: &mut Window<'_>) -> NodeId {
+        self.inner.request_layout(window)
     }
 
-    fn prepaint(&mut self, window: &mut Window<'_>) {
-        self.inner.prepaint(window);
+    fn prepaint(&mut self, bounds: Rect, window: &mut Window<'_>) {
+        self.inner.prepaint(bounds, window);
     }
 
     pub fn prepaint_as_root(
@@ -179,10 +186,34 @@ impl AnyElement {
         available_size: Size,
         window: &mut Window<'_>,
     ) {
-        let _ = origin;
-        let _ = available_size;
-        self.request_layout(window);
-        self.prepaint(window);
+        let child = self.request_layout(window);
+        let root = window
+            .taffy
+            .new_with_children(
+                Style {
+                    size: TaffySize {
+                        width: length(available_size.width),
+                        height: length(available_size.height),
+                    },
+                    ..Default::default()
+                },
+                &[child],
+            )
+            .expect("create root layout node");
+
+        window
+            .taffy
+            .compute_layout(
+                root,
+                TaffySize {
+                    width: AvailableSpace::Definite(available_size.width),
+                    height: AvailableSpace::Definite(available_size.height),
+                },
+            )
+            .expect("compute root layout");
+
+        let bounds = layout_rect(&window.taffy, child, origin);
+        self.prepaint(bounds, window);
     }
 
     pub fn paint(&mut self, window: &mut Window<'_>) {
@@ -195,8 +226,8 @@ pub fn quad(rect: Rect, color: Color) -> AnyElement {
 }
 
 trait GenericElement {
-    fn request_layout(&mut self, window: &mut Window<'_>);
-    fn prepaint(&mut self, window: &mut Window<'_>);
+    fn request_layout(&mut self, window: &mut Window<'_>) -> NodeId;
+    fn prepaint(&mut self, bounds: Rect, window: &mut Window<'_>);
     fn paint(&mut self, window: &mut Window<'_>);
 }
 
@@ -209,20 +240,21 @@ struct ElementBox<E: Element> {
 }
 
 impl<E: Element> GenericElement for ElementBox<E> {
-    fn request_layout(&mut self, window: &mut Window<'_>) {
+    fn request_layout(&mut self, window: &mut Window<'_>) -> NodeId {
         let (node_id, request_layout) = self.element.request_layout(window);
         self.node_id = Some(node_id);
         self.request_layout = Some(request_layout);
         self.prepaint = None;
         self.bounds = None;
+        node_id
     }
 
-    fn prepaint(&mut self, window: &mut Window<'_>) {
+    fn prepaint(&mut self, bounds: Rect, window: &mut Window<'_>) {
         let request_layout = self
             .request_layout
             .as_mut()
             .expect("request_layout must run before prepaint");
-        let (bounds, prepaint) = self.element.prepaint(request_layout, window);
+        let prepaint = self.element.prepaint(bounds, request_layout, window);
         self.bounds = Some(bounds);
         self.prepaint = Some(prepaint);
     }
@@ -260,7 +292,7 @@ pub struct Window<'a> {
     input: &'a InputState,
     screen_size: Size,
     frame: u64,
-    next_node_id: u64,
+    taffy: TaffyTree<()>,
     draw_list: Vec<DrawCmd>,
 }
 
@@ -272,15 +304,9 @@ impl<'a> Window<'a> {
             input,
             screen_size,
             frame,
-            next_node_id: 0,
+            taffy: TaffyTree::new(),
             draw_list: Vec::new(),
         }
-    }
-
-    fn alloc_node_id(&mut self) -> NodeId {
-        let id = NodeId(self.next_node_id);
-        self.next_node_id += 1;
-        id
     }
 
     pub fn screen_size(&self) -> Size {
@@ -324,6 +350,38 @@ impl<'a> Window<'a> {
 
 fn root_id(id_source: &str) -> u64 {
     hash_str(id_source)
+}
+
+fn layout_rect(taffy: &TaffyTree<()>, node_id: NodeId, parent_origin: Point) -> Rect {
+    let layout = taffy.layout(node_id).expect("layout node");
+    Rect::from_origin_and_size(
+        Point::new(
+            parent_origin.x + layout.location.x,
+            parent_origin.y + layout.location.y,
+        ),
+        Size::new(layout.size.width, layout.size.height),
+    )
+}
+
+fn absolute_leaf_style(pos: Point, size: Size) -> Style {
+    Style {
+        position: Position::Absolute,
+        inset: inset(pos),
+        size: TaffySize {
+            width: length(size.width),
+            height: length(size.height),
+        },
+        ..Default::default()
+    }
+}
+
+fn inset(pos: Point) -> TaffyRect<taffy::style::LengthPercentageAuto> {
+    TaffyRect {
+        left: length(pos.x),
+        right: auto(),
+        top: length(pos.y),
+        bottom: auto(),
+    }
 }
 
 fn hash_str(value: &str) -> u64 {

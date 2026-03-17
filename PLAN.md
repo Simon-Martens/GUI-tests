@@ -467,6 +467,9 @@ Why this stage exists:
 Goal:
 - replace any temporary manual positioning with the actual layout engine
 
+Status:
+- complete
+
 Extend `Window`:
 - add `taffy`
 
@@ -1057,3 +1060,23 @@ Why this is next:
 - `skia-safe` may be a better practical fit than hand-rolling a renderer stack if the goal is robust 2D rendering rather than `wgpu` specifically
 - it keeps the renderer replaceable while letting the higher-level UI architecture stay the same
 - this is especially attractive if Vulkan, OpenGL, Metal, or other native backends are acceptable
+
+### Next Step 10. Evaluate Enum-Based `AnyElement` To Remove Dynamic Dispatch
+Goal:
+- determine whether `AnyElement` should stay a trait-object wrapper or become a closed enum
+- remove dynamic dispatch and trait-object allocation from the hot element path if the element set stays small
+
+Implement:
+- prototype an enum-based `AnyElement` for the current hand-written element set
+- store `ElementBox<Quad>`, `ElementBox<Label>`, `ElementBox<Button>`, `ElementBox<Div>`, and future leaf types as enum variants
+- replace trait-object dispatch with `match`-based dispatch inside `AnyElement`
+
+Why this is next:
+- the MVP still needs one uniform element container, but that does not require trait objects if the set of element types is intentionally closed
+- an enum-based `AnyElement` may be easier to reason about while the project is still small
+- this keeps typed phase state while reducing runtime indirection
+
+Tradeoff to evaluate:
+- trait-object `AnyElement` keeps the element set open and extensible
+- enum-based `AnyElement` removes dynamic dispatch but requires updating the enum whenever a new element type is added
+- the right choice depends on whether this codebase wants openness or concrete simplicity more
