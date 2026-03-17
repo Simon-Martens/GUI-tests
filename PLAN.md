@@ -288,6 +288,9 @@ Do not add yet:
 Goal:
 - introduce persistent state in the smallest possible form
 
+Status:
+- complete
+
 Implement in `ui.rs`:
 - `UiMemory`
   - `frame`
@@ -322,6 +325,9 @@ Do not add yet:
 ### Stage 4. Add a Root `Render` View
 Goal:
 - separate retained app/view state from frame-local drawing
+
+Status:
+- complete
 
 Implement in `ui.rs`:
 - `Render`

@@ -8,21 +8,35 @@ use winit::window::{Window as OsWindow, WindowAttributes, WindowId};
 
 use crate::geom::{Point, Rect, Size, rgb};
 use crate::gpu::{DrawCmd, GpuState};
+use crate::ui::{Render, Window};
 
-pub fn run() {
+pub fn run<V: Render>(view: V) {
     let event_loop = EventLoop::new().expect("failed to create event loop");
-    let mut app = App::default();
+    let mut app = App::new(view);
     event_loop.run_app(&mut app).expect("failed to run app");
 }
 
-#[derive(Default)]
-struct App {
+struct App<V: Render> {
     window: Option<Arc<OsWindow>>,
     window_id: Option<WindowId>,
     gpu: Option<GpuState>,
+    frame_number: u64,
+    view: V,
 }
 
-impl ApplicationHandler for App {
+impl<V: Render> App<V> {
+    fn new(view: V) -> Self {
+        Self {
+            window: None,
+            window_id: None,
+            gpu: None,
+            frame_number: 0,
+            view,
+        }
+    }
+}
+
+impl<V: Render> ApplicationHandler for App<V> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -83,7 +97,7 @@ impl ApplicationHandler for App {
     }
 }
 
-impl App {
+impl<V: Render> App<V> {
     // this is the actual drawing event. The drawing list will get tessellated into GPU primitives
     // to render.
     fn redraw(&mut self) {
@@ -97,6 +111,9 @@ impl App {
         };
 
         let size = window.inner_size();
+        self.frame_number += 1;
+        let mut ui_window = Window::new(Size::new(size.width as f32, size.height as f32), self.frame_number);
+        let _root = self.view.render(&mut ui_window);
         let draw_list = vec![
             DrawCmd::Rect {
                 rect: Rect::from_origin_and_size(
