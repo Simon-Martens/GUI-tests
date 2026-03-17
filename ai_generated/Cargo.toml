@@ -5,8 +5,8 @@ edition = "2024"
 
 [dependencies]
 bytemuck = { version = "1.24.0", features = ["derive"] }
+euclid = "0.22.13"
 freetype-rs = "0.38.0"
-glam = "0.30.5"
 harfbuzz_rs_now = "2.3.2"
 pollster = "0.4.0"
 taffy = "0.7.7"

@@ -7,7 +7,7 @@ use taffy::prelude::{
     Style, TaffyTree, auto, length,
 };
 
-use crate::geom::{Color, Rect, Vec2, rgb};
+use crate::geom::{Color, Point, Rect, Size, Vec2, rgb};
 use crate::gpu::DrawCmd;
 use crate::text as text_system;
 
@@ -17,12 +17,12 @@ fn elapsed_ms(start: Instant, end: Instant) -> f64 {
 
 #[derive(Default)]
 pub struct InputState {
-    pub mouse_pos: Vec2,
+    pub mouse_pos: Point,
     pub mouse_down: bool,
     pub mouse_pressed: bool,
     pub mouse_released: bool,
-    pub press_pos: Option<Vec2>,
-    pub release_pos: Option<Vec2>,
+    pub press_pos: Option<Point>,
+    pub release_pos: Option<Point>,
 }
 
 impl InputState {
@@ -151,7 +151,7 @@ pub trait Render: 'static {
 pub struct Window<'a> {
     memory: &'a mut UiMemory,
     input: &'a InputState,
-    screen_size: Vec2,
+    screen_size: Size,
     taffy: TaffyTree<()>,
     hitboxes: Vec<Hitbox>,
     draw_list: Vec<DrawCmd>,
@@ -164,7 +164,7 @@ impl<'a> Window<'a> {
     pub fn new(
         memory: &'a mut UiMemory,
         input: &'a InputState,
-        screen_size: Vec2,
+        screen_size: Size,
     ) -> Self {
         Self {
             memory,
@@ -175,16 +175,16 @@ impl<'a> Window<'a> {
             draw_list: Vec::new(),
             actions: Vec::new(),
             interaction: FrameInteraction::default(),
-            content_masks: vec![Rect::from_min_size(Vec2::ZERO, screen_size)],
+            content_masks: vec![Rect::from_origin_and_size(Point::origin(), screen_size)],
         }
     }
 
-    pub fn screen_size(&self) -> Vec2 {
+    pub fn screen_size(&self) -> Size {
         self.screen_size
     }
 
     pub fn screen_rect(&self) -> Rect {
-        Rect::from_min_size(Vec2::ZERO, self.screen_size)
+        Rect::from_origin_and_size(Point::origin(), self.screen_size)
     }
 
     pub fn counter(&mut self, id_source: &str) -> i32 {
@@ -207,7 +207,7 @@ impl<'a> Window<'a> {
 
         let mut root = view.render(self);
         let after_render_tree = capture_timing.then(Instant::now);
-        root.prepaint_as_root(Vec2::ZERO, self.screen_size, self);
+        root.prepaint_as_root(Point::origin(), self.screen_size, self);
         let after_prepaint = capture_timing.then(Instant::now);
         self.interaction = self.resolve_interaction();
         let after_interaction = capture_timing.then(Instant::now);
@@ -255,8 +255,8 @@ impl<'a> Window<'a> {
     fn push_content_mask(&mut self, mask: Rect) {
         let next = self
             .current_content_mask()
-            .intersect(mask)
-            .unwrap_or_else(|| Rect::from_min_size(mask.min, Vec2::ZERO));
+            .intersection(&mask)
+            .unwrap_or_else(|| Rect::from_origin_and_size(mask.min, Size::new(0.0, 0.0)));
         self.content_masks.push(next);
     }
 
@@ -294,12 +294,12 @@ impl<'a> Window<'a> {
     }
 
     fn paint_quad(&mut self, rect: Rect, color: Color) {
-        if let Some(rect) = rect.intersect(self.current_content_mask()) {
+        if let Some(rect) = rect.intersection(&self.current_content_mask()) {
             self.draw_list.push(DrawCmd::Rect { rect, color });
         }
     }
 
-    fn paint_text(&mut self, pos: Vec2, text: &str, scale: f32, color: Color) {
+    fn paint_text(&mut self, pos: Point, text: &str, scale: f32, color: Color) {
         let clip_rect = self.current_content_mask();
         if clip_rect.width() <= 0.0 || clip_rect.height() <= 0.0 {
             return;
@@ -376,9 +376,9 @@ impl<'a> Window<'a> {
         }
     }
 
-    fn hit_test(&self, point: Vec2) -> Option<usize> {
+    fn hit_test(&self, point: Point) -> Option<usize> {
         for (index, hitbox) in self.hitboxes.iter().enumerate().rev() {
-            let Some(visible_rect) = hitbox.rect.intersect(hitbox.content_mask) else {
+            let Some(visible_rect) = hitbox.rect.intersection(&hitbox.content_mask) else {
                 continue;
             };
             if visible_rect.contains(point) {
@@ -486,14 +486,14 @@ impl AnyElement {
         self.inner.request_layout(parent_scope, window)
     }
 
-    fn prepaint_from_parent(&mut self, parent_origin: Vec2, window: &mut Window<'_>) {
+    fn prepaint_from_parent(&mut self, parent_origin: Point, window: &mut Window<'_>) {
         self.inner.prepaint_from_parent(parent_origin, window);
     }
 
     pub fn prepaint_as_root(
         &mut self,
-        origin: Vec2,
-        available_size: Vec2,
+        origin: Point,
+        available_size: Size,
         window: &mut Window<'_>,
     ) {
         let child = self.request_layout(None, window);
@@ -502,8 +502,8 @@ impl AnyElement {
             .new_with_children(
                 Style {
                     size: TaffySize {
-                        width: length(available_size.x),
-                        height: length(available_size.y),
+                        width: length(available_size.width),
+                        height: length(available_size.height),
                     },
                     ..Default::default()
                 },
@@ -516,8 +516,8 @@ impl AnyElement {
             .compute_layout(
                 root,
                 TaffySize {
-                    width: AvailableSpace::Definite(available_size.x),
-                    height: AvailableSpace::Definite(available_size.y),
+                    width: AvailableSpace::Definite(available_size.width),
+                    height: AvailableSpace::Definite(available_size.height),
                 },
             )
             .expect("compute root layout");
@@ -536,7 +536,7 @@ trait ErasedElement {
         parent_scope: Option<GlobalElementId>,
         window: &mut Window<'_>,
     ) -> NodeId;
-    fn prepaint_from_parent(&mut self, parent_origin: Vec2, window: &mut Window<'_>);
+    fn prepaint_from_parent(&mut self, parent_origin: Point, window: &mut Window<'_>);
     fn paint(&mut self, window: &mut Window<'_>);
 }
 
@@ -568,7 +568,7 @@ impl<E: Element> ErasedElement for ElementBox<E> {
         node_id
     }
 
-    fn prepaint_from_parent(&mut self, parent_origin: Vec2, window: &mut Window<'_>) {
+    fn prepaint_from_parent(&mut self, parent_origin: Point, window: &mut Window<'_>) {
         let node_id = self.node_id.expect("missing node id before prepaint");
         let bounds = layout_rect(&window.taffy, node_id, parent_origin);
         self.bounds = Some(bounds);
@@ -607,7 +607,7 @@ pub fn quad(rect: Rect, color: Color) -> Quad {
     Quad::new(rect, color)
 }
 
-pub fn text(pos: Vec2, text: impl Into<String>, scale: f32, color: Color) -> AbsoluteText {
+pub fn text(pos: Point, text: impl Into<String>, scale: f32, color: Color) -> AbsoluteText {
     AbsoluteText::new(pos, text.into(), scale, color)
 }
 
@@ -621,8 +621,8 @@ pub fn button(id_source: &str, label: impl Into<String>) -> Button {
 
 pub struct Div {
     id: Option<LocalElementId>,
-    position: Option<Vec2>,
-    size: Option<Vec2>,
+    position: Option<Point>,
+    size: Option<Size>,
     padding: f32,
     gap: f32,
     background: Option<Color>,
@@ -651,12 +651,12 @@ impl Div {
         self
     }
 
-    pub fn absolute(mut self, pos: Vec2) -> Self {
+    pub fn absolute(mut self, pos: Point) -> Self {
         self.position = Some(pos);
         self
     }
 
-    pub fn size(mut self, size: Vec2) -> Self {
+    pub fn size(mut self, size: Size) -> Self {
         self.size = Some(size);
         self
     }
@@ -822,7 +822,7 @@ impl Element for Quad {
     ) -> (NodeId, Self::RequestLayoutState) {
         let node = window
             .taffy
-            .new_leaf(absolute_leaf_style(self.rect.min, self.rect.max - self.rect.min))
+            .new_leaf(absolute_leaf_style(self.rect.min, self.rect.size()))
             .expect("create quad node");
         (node, ())
     }
@@ -853,14 +853,14 @@ impl Element for Quad {
 }
 
 pub struct AbsoluteText {
-    pos: Vec2,
+    pos: Point,
     text: String,
     scale: f32,
     color: Color,
 }
 
 impl AbsoluteText {
-    fn new(pos: Vec2, text: String, scale: f32, color: Color) -> Self {
+    fn new(pos: Point, text: String, scale: f32, color: Color) -> Self {
         Self {
             pos,
             text,
@@ -938,8 +938,8 @@ impl Element for Label {
             .taffy
             .new_leaf(Style {
                 size: TaffySize {
-                    width: length(size.x),
-                    height: length(size.y),
+                    width: length(size.width),
+                    height: length(size.height),
                 },
                 ..Default::default()
             })
@@ -973,12 +973,12 @@ pub struct Button {
     id: LocalElementId,
     label: String,
     scale: f32,
-    padding: Vec2,
+    padding: Size,
     on_click: Option<UiAction>,
 }
 
 pub struct ButtonRequestLayoutState {
-    text_size: Vec2,
+    text_size: Size,
 }
 
 pub struct ButtonPrepaintState {
@@ -991,7 +991,7 @@ impl Button {
             id,
             label,
             scale,
-            padding: Vec2::new(14.0, 9.0),
+            padding: Size::new(14.0, 9.0),
             on_click: None,
         }
     }
@@ -1016,13 +1016,16 @@ impl Element for Button {
         window: &mut Window<'_>,
     ) -> (NodeId, Self::RequestLayoutState) {
         let text_size = text_system::measure(&self.label, self.scale);
-        let size = text_size + self.padding * 2.0;
+        let size = Size::new(
+            text_size.width + self.padding.width * 2.0,
+            text_size.height + self.padding.height * 2.0,
+        );
         let node = window
             .taffy
             .new_leaf(Style {
                 size: TaffySize {
-                    width: length(size.x),
-                    height: length(size.y),
+                    width: length(size.width),
+                    height: length(size.height),
                 },
                 ..Default::default()
             })
@@ -1063,35 +1066,35 @@ impl Element for Button {
 
         window.paint_quad(bounds, background);
 
-        let text_pos = Vec2::new(
-            bounds.min.x + (bounds.width() - request_layout.text_size.x) * 0.5,
-            bounds.min.y + (bounds.height() - request_layout.text_size.y) * 0.5,
+        let text_pos = Point::new(
+            bounds.min.x + (bounds.width() - request_layout.text_size.width) * 0.5,
+            bounds.min.y + (bounds.height() - request_layout.text_size.height) * 0.5,
         );
         window.paint_text(text_pos, &self.label, self.scale, rgb(0.08, 0.09, 0.11));
     }
 }
 
-fn layout_rect(taffy: &TaffyTree<()>, node_id: NodeId, parent_origin: Vec2) -> Rect {
+fn layout_rect(taffy: &TaffyTree<()>, node_id: NodeId, parent_origin: Point) -> Rect {
     let layout = taffy.layout(node_id).expect("layout node");
-    Rect::from_min_size(
+    Rect::from_origin_and_size(
         parent_origin + Vec2::new(layout.location.x, layout.location.y),
-        Vec2::new(layout.size.width, layout.size.height),
+        Size::new(layout.size.width, layout.size.height),
     )
 }
 
-fn absolute_leaf_style(pos: Vec2, size: Vec2) -> Style {
+fn absolute_leaf_style(pos: Point, size: Size) -> Style {
     Style {
         position: Position::Absolute,
         inset: inset(pos),
         size: TaffySize {
-            width: length(size.x),
-            height: length(size.y),
+            width: length(size.width),
+            height: length(size.height),
         },
         ..Default::default()
     }
 }
 
-fn inset(pos: Vec2) -> TaffyRect<taffy::style::LengthPercentageAuto> {
+fn inset(pos: Point) -> TaffyRect<taffy::style::LengthPercentageAuto> {
     TaffyRect {
         left: length(pos.x),
         right: auto(),
@@ -1109,11 +1112,11 @@ fn all_sides(value: f32) -> TaffyRect<taffy::style::LengthPercentage> {
     }
 }
 
-fn optional_size(size: Option<Vec2>) -> TaffySize<taffy::style::Dimension> {
+fn optional_size(size: Option<Size>) -> TaffySize<taffy::style::Dimension> {
     match size {
         Some(size) => TaffySize {
-            width: length(size.x),
-            height: length(size.y),
+            width: length(size.width),
+            height: length(size.height),
         },
         None => TaffySize {
             width: auto(),

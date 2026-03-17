@@ -4,7 +4,7 @@ use freetype::Library;
 use freetype::face::LoadFlag;
 use harfbuzz_rs_now::{Face as HbFace, Font as HbFont, UnicodeBuffer, shape};
 
-use crate::geom::{Color, Rect, Vec2};
+use crate::geom::{Color, Point, Rect, Size};
 
 const FONT_PATHS: &[&str] = &[
     "/usr/share/fonts/gnu-free/FreeSans.otf",
@@ -20,9 +20,9 @@ pub struct GlyphRect {
     pub color: Color,
 }
 
-pub fn measure(text: &str, scale: f32) -> Vec2 {
+pub fn measure(text: &str, scale: f32) -> Size {
     if text.is_empty() {
-        return Vec2::ZERO;
+        return Size::new(0.0, 0.0);
     }
 
     with_context(|ctx| {
@@ -58,17 +58,17 @@ pub fn measure(text: &str, scale: f32) -> Vec2 {
         }
 
         if min_x.is_finite() {
-            Vec2::new(
+            Size::new(
                 (max_x - min_x).max(0.0),
                 (max_y - min_y).max(pixel_height * 0.75),
             )
         } else {
-            Vec2::new(layout.advance, pixel_height)
+            Size::new(layout.advance, pixel_height)
         }
     })
 }
 
-pub fn rasterize(text: &str, pos: Vec2, scale: f32, color: Color) -> Vec<GlyphRect> {
+pub fn rasterize(text: &str, pos: Point, scale: f32, color: Color) -> Vec<GlyphRect> {
     if text.is_empty() {
         return Vec::new();
     }
@@ -106,9 +106,9 @@ pub fn rasterize(text: &str, pos: Vec2, scale: f32, color: Color) -> Vec<GlyphRe
                     let mut pixel_color = color;
                     pixel_color[3] *= alpha as f32 / 255.0;
                     rects.push(GlyphRect {
-                        rect: Rect::from_min_size(
-                            Vec2::new(left + col as f32, top + row as f32),
-                            Vec2::splat(1.0),
+                        rect: Rect::from_origin_and_size(
+                            Point::new(left + col as f32, top + row as f32),
+                            Size::new(1.0, 1.0),
                         ),
                         color: pixel_color,
                     });

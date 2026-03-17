@@ -121,8 +121,13 @@ This is the role of `gpu.rs`.
 - Keep `wgpu`.
 - Keep FreeType + HarfBuzz.
 - Use `taffy`.
-- Use `glam`.
-- Keep a small local `Rect`.
+- Use `euclid`.
+- Use `euclid` geometry types directly wherever practical:
+  - `Point2D`
+  - `Vector2D`
+  - `Size2D`
+  - `Box2D` or `Rect`
+- Only add thin local aliases or helpers in `geom.rs` when they remove friction.
 - No images.
 - No keyboard input.
 - No text input.
@@ -173,7 +178,7 @@ That means each stage below ends in a working state.
 Add these from the start:
 - `bytemuck` with `derive`
 - `freetype-rs`
-- `glam`
+- `euclid`
 - `harfbuzz_rs_now`
 - `pollster`
 - `taffy`
@@ -204,11 +209,14 @@ Goal:
 
 Implement:
 - `geom.rs`
+  - `Point`
   - `Vec2`
-  - `Rect`
+  - `Size`
+  - `Rect` backed by `euclid` (`Box2D` or `Rect`, whichever fits the stage better)
   - `Color`
   - `rgb`
   - `to_ndc`
+  - only minimal helper constructors/conversions
 - `gpu.rs`
   - `DrawCmd::Rect`
   - `GpuState`
@@ -770,6 +778,8 @@ The rebuild is minimally viable when:
 - paint emits only rect/text draw commands
 - renderer consumes only draw commands
 - app applies emitted actions after the frame is produced
+
+
 
 ## Next Steps After MVP
 These are intentionally out of scope for the initial rebuild, but they are the next rendering upgrades to make after the MVP is stable.

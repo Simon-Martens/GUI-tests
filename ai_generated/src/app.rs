@@ -7,7 +7,7 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window as OsWindow, WindowAttributes, WindowId};
 
-use crate::geom::Vec2;
+use crate::geom::{Point, Size};
 use crate::gpu::GpuState;
 use crate::ui::{InputState, Render, UiAction, UiMemory, Window};
 
@@ -91,7 +91,7 @@ impl<V: Render> ApplicationHandler for App<V> {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                self.input.mouse_pos = Vec2::new(position.x as f32, position.y as f32);
+                self.input.mouse_pos = Point::new(position.x as f32, position.y as f32);
             }
             WindowEvent::MouseInput {
                 state,
@@ -137,7 +137,11 @@ impl<V: Render> App<V> {
         self.memory.begin_frame();
 
         let size = window.inner_size();
-        let mut ui_window = Window::new(&mut self.memory, &self.input, Vec2::new(size.width as f32, size.height as f32));
+        let mut ui_window = Window::new(
+            &mut self.memory,
+            &self.input,
+            Size::new(size.width as f32, size.height as f32),
+        );
         let draw_result = ui_window.draw(&mut self.view, self.debug.time_frames);
         let after_draw = self.debug.time_frames.then(Instant::now);
         let draw_timing = draw_result.timing;

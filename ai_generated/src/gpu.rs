@@ -6,7 +6,7 @@ use wgpu::util::DeviceExt;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-use crate::geom::{Color, Rect, Vec2, to_ndc};
+use crate::geom::{Color, Point, Rect, to_ndc};
 use crate::text;
 
 fn elapsed_ms(start: Instant, end: Instant) -> f64 {
@@ -19,7 +19,7 @@ pub enum DrawCmd {
         color: Color,
     },
     Text {
-        pos: Vec2,
+        pos: Point,
         text: String,
         scale: f32,
         color: Color,
@@ -257,7 +257,7 @@ fn tessellate(draw_list: &[DrawCmd], width: f32, height: f32) -> Vec<Vertex> {
 
 fn push_text(
     vertices: &mut Vec<Vertex>,
-    pos: Vec2,
+    pos: Point,
     text: &str,
     scale: f32,
     color: Color,
@@ -267,7 +267,7 @@ fn push_text(
 ) {
     for glyph_rect in text::rasterize(text, pos, scale, color) {
         let Some(rect) = clip_rect
-            .map(|clip| glyph_rect.rect.intersect(clip))
+            .map(|clip| glyph_rect.rect.intersection(&clip))
             .unwrap_or(Some(glyph_rect.rect))
         else {
             continue;
