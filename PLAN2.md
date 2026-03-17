@@ -992,3 +992,31 @@ Why this is next:
 - `lyon` is a pragmatic way to add path support without taking on a large geometry algorithm project
 - it becomes much more useful once a richer scene exists
 - it is optional unless the UI starts needing real vector geometry
+
+### Next Step 9. Evaluate a Skia-Backed Renderer
+Goal:
+- allow the renderer backend to target a mature 2D GPU engine instead of being tied to `wgpu`
+- support high-quality text, paths, shadows, clipping, and layers through a well-established graphics stack
+
+Implement:
+- define a renderer-facing draw IR that maps cleanly to Skia canvas operations
+- likely primitives:
+  - quad / rounded quad
+  - text run or glyph run
+  - path
+  - shadow
+  - image
+  - push layer / pop layer
+- translate the finalized UI scene or paint output into Skia canvas calls
+- keep the UI architecture unchanged above the renderer boundary
+
+Rules:
+- this is a backend choice, not a UI architecture change
+- the system should not depend on `wgpu` if another backend is a better fit
+- text can stay HarfBuzz-shaped if desired, with glyph runs handed to Skia
+- backend-facing primitives should stay renderer-oriented and not leak Skia types upward into the UI phases
+
+Why this is next:
+- `skia-safe` may be a better practical fit than hand-rolling a renderer stack if the goal is robust 2D rendering rather than `wgpu` specifically
+- it keeps the renderer replaceable while letting the higher-level UI architecture stay the same
+- this is especially attractive if Vulkan, OpenGL, Metal, or other native backends are acceptable
