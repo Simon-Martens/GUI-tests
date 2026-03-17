@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
@@ -7,6 +8,10 @@ use winit::window::Window;
 
 use crate::geom::{Color, Rect, Vec2, to_ndc};
 use crate::text;
+
+fn elapsed_ms(start: Instant, end: Instant) -> f64 {
+    end.duration_since(start).as_secs_f64() * 1000.0
+}
 
 pub enum DrawCmd {
     Rect {
@@ -20,6 +25,16 @@ pub enum DrawCmd {
         color: Color,
         clip_rect: Option<Rect>,
     },
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RenderTiming {
+    pub acquire_ms: f64,
+    pub tessellate_ms: f64,
+    pub upload_ms: f64,
+    pub encode_ms: f64,
+    pub submit_present_ms: f64,
+    pub total_ms: f64,
 }
 
 pub struct GpuState {
@@ -124,20 +139,27 @@ impl GpuState {
         self.surface.configure(&self.device, &self.config);
     }
 
-    pub fn render(&mut self, draw_list: &[DrawCmd]) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(
+        &mut self,
+        draw_list: &[DrawCmd],
+        capture_timing: bool,
+    ) -> Result<Option<RenderTiming>, wgpu::SurfaceError> {
         if self.config.width == 0 || self.config.height == 0 {
-            return Ok(());
+            return Ok(None);
         }
 
+        let render_start = capture_timing.then(Instant::now);
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        let after_acquire = capture_timing.then(Instant::now);
         let vertices = tessellate(
             draw_list,
             self.config.width as f32,
             self.config.height as f32,
         );
+        let after_tessellate = capture_timing.then(Instant::now);
         let vertex_buffer = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -145,6 +167,7 @@ impl GpuState {
                 contents: bytemuck::cast_slice(&vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             });
+        let after_upload = capture_timing.then(Instant::now);
 
         let mut encoder = self
             .device
@@ -177,11 +200,41 @@ impl GpuState {
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
             pass.draw(0..vertices.len() as u32, 0..1);
         }
+        let after_encode = capture_timing.then(Instant::now);
 
         self.queue.submit([encoder.finish()]);
         self.window.pre_present_notify();
         output.present();
-        Ok(())
+        let after_submit_present = capture_timing.then(Instant::now);
+
+        let timing = if let (
+            Some(render_start),
+            Some(after_acquire),
+            Some(after_tessellate),
+            Some(after_upload),
+            Some(after_encode),
+            Some(after_submit_present),
+        ) = (
+            render_start,
+            after_acquire,
+            after_tessellate,
+            after_upload,
+            after_encode,
+            after_submit_present,
+        ) {
+            Some(RenderTiming {
+                acquire_ms: elapsed_ms(render_start, after_acquire),
+                tessellate_ms: elapsed_ms(after_acquire, after_tessellate),
+                upload_ms: elapsed_ms(after_tessellate, after_upload),
+                encode_ms: elapsed_ms(after_upload, after_encode),
+                submit_present_ms: elapsed_ms(after_encode, after_submit_present),
+                total_ms: elapsed_ms(render_start, after_submit_present),
+            })
+        } else {
+            None
+        };
+
+        Ok(timing)
     }
 }
 

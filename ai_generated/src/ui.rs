@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::time::Instant;
 
 use taffy::prelude::{
     AvailableSpace, Display, FlexDirection, NodeId, Position, Rect as TaffyRect, Size as TaffySize,
@@ -9,6 +10,10 @@ use taffy::prelude::{
 use crate::geom::{Color, Rect, Vec2, rgb};
 use crate::gpu::DrawCmd;
 use crate::text as text_system;
+
+fn elapsed_ms(start: Instant, end: Instant) -> f64 {
+    end.duration_since(start).as_secs_f64() * 1000.0
+}
 
 #[derive(Default)]
 pub struct InputState {
@@ -125,6 +130,20 @@ pub struct UiOutput {
     pub interaction: FrameInteraction,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UiDrawTiming {
+    pub render_tree_ms: f64,
+    pub prepaint_ms: f64,
+    pub interaction_ms: f64,
+    pub paint_ms: f64,
+    pub total_ms: f64,
+}
+
+pub struct WindowDrawResult {
+    pub output: UiOutput,
+    pub timing: Option<UiDrawTiming>,
+}
+
 pub trait Render: 'static {
     fn render(&mut self, window: &mut Window<'_>) -> AnyElement;
 }
@@ -176,7 +195,8 @@ impl<'a> Window<'a> {
         UiAction::BumpInt(root_id(id_source))
     }
 
-    pub fn draw<R: Render>(&mut self, view: &mut R) -> UiOutput {
+    pub fn draw<R: Render>(&mut self, view: &mut R, capture_timing: bool) -> WindowDrawResult {
+        let frame_start = capture_timing.then(Instant::now);
         self.taffy = TaffyTree::new();
         self.hitboxes.clear();
         self.draw_list.clear();
@@ -186,14 +206,45 @@ impl<'a> Window<'a> {
         self.content_masks.push(self.screen_rect());
 
         let mut root = view.render(self);
+        let after_render_tree = capture_timing.then(Instant::now);
         root.prepaint_as_root(Vec2::ZERO, self.screen_size, self);
+        let after_prepaint = capture_timing.then(Instant::now);
         self.interaction = self.resolve_interaction();
+        let after_interaction = capture_timing.then(Instant::now);
         root.paint(self);
+        let after_paint = capture_timing.then(Instant::now);
 
-        UiOutput {
-            draw_list: std::mem::take(&mut self.draw_list),
-            actions: std::mem::take(&mut self.actions),
-            interaction: self.interaction,
+        let timing = if let (
+            Some(frame_start),
+            Some(after_render_tree),
+            Some(after_prepaint),
+            Some(after_interaction),
+            Some(after_paint),
+        ) = (
+            frame_start,
+            after_render_tree,
+            after_prepaint,
+            after_interaction,
+            after_paint,
+        ) {
+            Some(UiDrawTiming {
+                render_tree_ms: elapsed_ms(frame_start, after_render_tree),
+                prepaint_ms: elapsed_ms(after_render_tree, after_prepaint),
+                interaction_ms: elapsed_ms(after_prepaint, after_interaction),
+                paint_ms: elapsed_ms(after_interaction, after_paint),
+                total_ms: elapsed_ms(frame_start, after_paint),
+            })
+        } else {
+            None
+        };
+
+        WindowDrawResult {
+            output: UiOutput {
+                draw_list: std::mem::take(&mut self.draw_list),
+                actions: std::mem::take(&mut self.actions),
+                interaction: self.interaction,
+            },
+            timing,
         }
     }
 

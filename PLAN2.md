@@ -912,7 +912,24 @@ Implement:
 - CPU-side frame timing with `std::time::Instant`
 - console logging in the redraw path that prints:
   - frame number
-  - elapsed milliseconds for that frame
+  - total frame time
+  - a coarse app-shell breakdown such as:
+    - draw
+    - actions
+    - render
+    - finish
+- then split the expensive buckets further when needed:
+  - UI draw:
+    - render tree construction
+    - prepaint
+    - interaction resolution
+    - paint
+  - GPU render:
+    - surface acquire
+    - tessellation
+    - buffer upload
+    - command encoding
+    - submit / present
 
 Rules:
 - timing is disabled by default unless the debug option is set

@@ -11,6 +11,10 @@ use crate::geom::Vec2;
 use crate::gpu::GpuState;
 use crate::ui::{InputState, Render, UiAction, UiMemory, Window};
 
+fn elapsed_ms(start: Instant, end: Instant) -> f64 {
+    end.duration_since(start).as_secs_f64() * 1000.0
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct DebugOptions {
     pub time_frames: bool,
@@ -134,7 +138,10 @@ impl<V: Render> App<V> {
 
         let size = window.inner_size();
         let mut ui_window = Window::new(&mut self.memory, &self.input, Vec2::new(size.width as f32, size.height as f32));
-        let output = ui_window.draw(&mut self.view);
+        let draw_result = ui_window.draw(&mut self.view, self.debug.time_frames);
+        let after_draw = self.debug.time_frames.then(Instant::now);
+        let draw_timing = draw_result.timing;
+        let output = draw_result.output;
         let _interaction = output.interaction;
         let _clicked = output.interaction.clicked;
 
@@ -142,26 +149,60 @@ impl<V: Render> App<V> {
             self.apply_action(action);
         }
         self.memory.end_frame();
+        let after_actions = self.debug.time_frames.then(Instant::now);
 
         let gpu = match &mut self.gpu {
             Some(gpu) => gpu,
             None => return,
         };
-        match gpu.render(&output.draw_list) {
-            Ok(()) => {}
+        let render_timing = match gpu.render(&output.draw_list, self.debug.time_frames) {
+            Ok(timing) => timing,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                gpu.resize(window.inner_size())
+                gpu.resize(window.inner_size());
+                None
             }
             Err(wgpu::SurfaceError::OutOfMemory) => return,
-            Err(wgpu::SurfaceError::Timeout | wgpu::SurfaceError::Other) => {}
-        }
+            Err(wgpu::SurfaceError::Timeout | wgpu::SurfaceError::Other) => None,
+        };
+        let after_render = self.debug.time_frames.then(Instant::now);
         self.input.end_frame();
+        let frame_end = self.debug.time_frames.then(Instant::now);
 
-        if let Some(frame_start) = frame_start {
+        if let (
+            Some(frame_start),
+            Some(after_draw),
+            Some(draw_timing),
+            Some(after_actions),
+            Some(render_timing),
+            Some(after_render),
+            Some(frame_end),
+        ) = (
+            frame_start,
+            after_draw,
+            draw_timing,
+            after_actions,
+            render_timing,
+            after_render,
+            frame_end,
+        )
+        {
             eprintln!(
-                "frame {}: {:.3} ms",
+                "frame {}: draw(render={:.3} ms prepaint={:.3} ms interact={:.3} ms paint={:.3} ms total={:.3} ms) actions={:.3} ms render(acquire={:.3} ms tessellate={:.3} ms upload={:.3} ms encode={:.3} ms submit_present={:.3} ms total={:.3} ms) finish={:.3} ms total={:.3} ms",
                 self.frame_number,
-                frame_start.elapsed().as_secs_f64() * 1000.0
+                draw_timing.render_tree_ms,
+                draw_timing.prepaint_ms,
+                draw_timing.interaction_ms,
+                draw_timing.paint_ms,
+                draw_timing.total_ms,
+                elapsed_ms(after_draw, after_actions),
+                render_timing.acquire_ms,
+                render_timing.tessellate_ms,
+                render_timing.upload_ms,
+                render_timing.encode_ms,
+                render_timing.submit_present_ms,
+                render_timing.total_ms,
+                elapsed_ms(after_render, frame_end),
+                elapsed_ms(frame_start, frame_end),
             );
         }
     }
