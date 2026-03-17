@@ -79,20 +79,29 @@ struct WidgetState {
     last_rect: Option<Rect>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NodeId(u64);
+
+// Three stage rendering
+// - request_layout: currently trivial, later calculates width and heigt
+// - prepaint: will have to calculate hitboxes and interactove state
+// - paint: actually returns the primitives that graphics can paint
+// Any Element gors through these stages of layouting
 pub trait Element: 'static {
     type RequestLayoutState: 'static;
     type PrepaintState: 'static;
 
-    fn request_layout(&mut self, window: &mut Window<'_>) -> Self::RequestLayoutState;
+    fn request_layout(&mut self, window: &mut Window<'_>) -> (NodeId, Self::RequestLayoutState);
 
     fn prepaint(
         &mut self,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window<'_>,
-    ) -> Self::PrepaintState;
+    ) -> (Rect, Self::PrepaintState);
 
     fn paint(
         &mut self,
+        bounds: Rect,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         window: &mut Window<'_>,
@@ -110,66 +119,105 @@ impl Quad {
     }
 }
 
-// Three stage rendering
-// - request_layout: currently trivial, later calculates width and heigt
-// - prepaint: will have to calculate hitboxes and interactove state
-// - paint: actually returns the primitives that graphics can paint
-// Any Element gors through these stages of layouting
 impl Element for Quad {
     type RequestLayoutState = Rect;
     type PrepaintState = Rect;
 
-    fn request_layout(&mut self, _window: &mut Window<'_>) -> Self::RequestLayoutState {
-        self.rect
+    fn request_layout(&mut self, window: &mut Window<'_>) -> (NodeId, Self::RequestLayoutState) {
+        (window.alloc_node_id(), self.rect)
     }
 
     fn prepaint(
         &mut self,
         request_layout: &mut Self::RequestLayoutState,
         _window: &mut Window<'_>,
-    ) -> Self::PrepaintState {
-        *request_layout
+    ) -> (Rect, Self::PrepaintState) {
+        (*request_layout, *request_layout)
     }
 
     fn paint(
         &mut self,
+        bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         window: &mut Window<'_>,
     ) {
-        window.draw_rect(*prepaint, self.color);
+        let _ = prepaint;
+        window.draw_rect(bounds, self.color);
     }
 }
 
+// THis is a wrapper around an element that can be drawn in three stages
 pub struct AnyElement {
-    quad: Quad,
-    request_layout: Option<<Quad as Element>::RequestLayoutState>,
-    prepaint: Option<<Quad as Element>::PrepaintState>,
+    inner: Box<dyn GenericElement>,
 }
 
 impl AnyElement {
-    pub fn new(quad: Quad) -> Self {
+    pub fn new<E: Element>(element: E) -> Self {
         Self {
-            quad,
-            request_layout: None,
-            prepaint: None,
+            inner: Box::new(ElementBox::<E> {
+                element,
+                node_id: None,
+                request_layout: None,
+                prepaint: None,
+                bounds: None,
+            }),
         }
     }
 
     pub fn request_layout(&mut self, window: &mut Window<'_>) {
-        self.request_layout = Some(self.quad.request_layout(window));
-        self.prepaint = None;
+        self.inner.request_layout(window);
     }
 
     pub fn prepaint(&mut self, window: &mut Window<'_>) {
+        self.inner.prepaint(window);
+    }
+
+    pub fn paint(&mut self, window: &mut Window<'_>) {
+        self.inner.paint(window);
+    }
+}
+
+pub fn quad(rect: Rect, color: Color) -> AnyElement {
+    AnyElement::new(Quad::new(rect, color))
+}
+
+trait GenericElement {
+    fn request_layout(&mut self, window: &mut Window<'_>);
+    fn prepaint(&mut self, window: &mut Window<'_>);
+    fn paint(&mut self, window: &mut Window<'_>);
+}
+
+struct ElementBox<E: Element> {
+    element: E,
+    node_id: Option<NodeId>,
+    request_layout: Option<E::RequestLayoutState>,
+    prepaint: Option<E::PrepaintState>,
+    bounds: Option<Rect>,
+}
+
+impl<E: Element> GenericElement for ElementBox<E> {
+    fn request_layout(&mut self, window: &mut Window<'_>) {
+        let (node_id, request_layout) = self.element.request_layout(window);
+        self.node_id = Some(node_id);
+        self.request_layout = Some(request_layout);
+        self.prepaint = None;
+        self.bounds = None;
+    }
+
+    fn prepaint(&mut self, window: &mut Window<'_>) {
         let request_layout = self
             .request_layout
             .as_mut()
             .expect("request_layout must run before prepaint");
-        self.prepaint = Some(self.quad.prepaint(request_layout, window));
+        let (bounds, prepaint) = self.element.prepaint(request_layout, window);
+        self.bounds = Some(bounds);
+        self.prepaint = Some(prepaint);
     }
 
-    pub fn paint(&mut self, window: &mut Window<'_>) {
+    fn paint(&mut self, window: &mut Window<'_>) {
+        let _node_id = self.node_id.expect("request_layout must set a node id");
+        let bounds = self.bounds.expect("prepaint must run before paint");
         let request_layout = self
             .request_layout
             .as_mut()
@@ -178,12 +226,8 @@ impl AnyElement {
             .prepaint
             .as_mut()
             .expect("prepaint must run before paint");
-        self.quad.paint(request_layout, prepaint, window);
+        self.element.paint(bounds, request_layout, prepaint, window);
     }
-}
-
-pub fn quad(rect: Rect, color: Color) -> AnyElement {
-    AnyElement::new(Quad::new(rect, color))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -204,6 +248,7 @@ pub struct Window<'a> {
     input: &'a InputState,
     screen_size: Size,
     frame: u64,
+    next_node_id: u64,
     draw_list: Vec<DrawCmd>,
 }
 
@@ -215,8 +260,15 @@ impl<'a> Window<'a> {
             input,
             screen_size,
             frame,
+            next_node_id: 0,
             draw_list: Vec::new(),
         }
+    }
+
+    fn alloc_node_id(&mut self) -> NodeId {
+        let id = NodeId(self.next_node_id);
+        self.next_node_id += 1;
+        id
     }
 
     pub fn screen_size(&self) -> Size {

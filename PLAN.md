@@ -413,11 +413,14 @@ Why this stage exists:
 
 ### Stage 7. Add `AnyElement`
 Goal:
-- type erase elements while keeping typed phase state
+- wrap elements behind `AnyElement` while keeping typed phase state
+
+Status:
+- complete
 
 Implement:
 - `AnyElement`
-- internal erased trait
+- internal `GenericElement` trait
 - internal typed storage per concrete element
 
 `AnyElement` must store:

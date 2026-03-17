@@ -461,7 +461,7 @@ pub trait ParentElement {
 }
 
 pub struct AnyElement {
-    inner: Box<dyn ErasedElement>,
+    inner: Box<dyn GenericElement>,
 }
 
 impl AnyElement {
@@ -530,7 +530,7 @@ impl AnyElement {
     }
 }
 
-trait ErasedElement {
+trait GenericElement {
     fn request_layout(
         &mut self,
         parent_scope: Option<GlobalElementId>,
@@ -549,7 +549,7 @@ struct ElementBox<E: Element> {
     bounds: Option<Rect>,
 }
 
-impl<E: Element> ErasedElement for ElementBox<E> {
+impl<E: Element> GenericElement for ElementBox<E> {
     fn request_layout(
         &mut self,
         parent_scope: Option<GlobalElementId>,
