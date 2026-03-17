@@ -6,7 +6,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window as OsWindow, WindowAttributes, WindowId};
 
-use crate::geom::Size;
+use crate::geom::{Point, Size};
 use crate::gpu::GpuState;
 use crate::ui::{InputState, Render, UiMemory, Window};
 
@@ -123,8 +123,7 @@ impl<V: Render> App<V> {
             Size::new(size.width as f32, size.height as f32),
         );
         let mut root = self.view.render(&mut ui_window);
-        root.request_layout(&mut ui_window);
-        root.prepaint(&mut ui_window);
+        root.prepaint_as_root(Point::origin(), ui_window.screen_size(), &mut ui_window);
         root.paint(&mut ui_window);
         let draw_list = ui_window.finish();
         self.memory.end_frame();

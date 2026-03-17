@@ -445,6 +445,9 @@ Do not allow:
 Goal:
 - make the root use the same element pipeline as everything else
 
+Status:
+- complete
+
 Implement on `AnyElement`:
 - `prepaint_as_root(...)`
 - `paint(...)`

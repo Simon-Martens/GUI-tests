@@ -165,12 +165,24 @@ impl AnyElement {
         }
     }
 
-    pub fn request_layout(&mut self, window: &mut Window<'_>) {
+    fn request_layout(&mut self, window: &mut Window<'_>) {
         self.inner.request_layout(window);
     }
 
-    pub fn prepaint(&mut self, window: &mut Window<'_>) {
+    fn prepaint(&mut self, window: &mut Window<'_>) {
         self.inner.prepaint(window);
+    }
+
+    pub fn prepaint_as_root(
+        &mut self,
+        origin: Point,
+        available_size: Size,
+        window: &mut Window<'_>,
+    ) {
+        let _ = origin;
+        let _ = available_size;
+        self.request_layout(window);
+        self.prepaint(window);
     }
 
     pub fn paint(&mut self, window: &mut Window<'_>) {
