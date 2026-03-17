@@ -133,7 +133,6 @@ pub struct Window<'a> {
     memory: &'a mut UiMemory,
     input: &'a InputState,
     screen_size: Vec2,
-    frame: u64,
     taffy: TaffyTree<()>,
     hitboxes: Vec<Hitbox>,
     draw_list: Vec<DrawCmd>,
@@ -147,13 +146,11 @@ impl<'a> Window<'a> {
         memory: &'a mut UiMemory,
         input: &'a InputState,
         screen_size: Vec2,
-        frame: u64,
     ) -> Self {
         Self {
             memory,
             input,
             screen_size,
-            frame,
             taffy: TaffyTree::new(),
             hitboxes: Vec::new(),
             draw_list: Vec::new(),
@@ -161,10 +158,6 @@ impl<'a> Window<'a> {
             interaction: FrameInteraction::default(),
             content_masks: vec![Rect::from_min_size(Vec2::ZERO, screen_size)],
         }
-    }
-
-    pub fn frame(&self) -> u64 {
-        self.frame
     }
 
     pub fn screen_size(&self) -> Vec2 {

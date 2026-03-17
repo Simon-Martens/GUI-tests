@@ -12,7 +12,12 @@ use crate::ui::{
 };
 
 fn main() {
-    app::run(Demo::default());
+    app::run(
+        Demo::default(),
+        app::DebugOptions {
+            time_frames: true,
+        },
+    );
 }
 
 #[derive(Default)]
@@ -32,12 +37,6 @@ impl Render for Demo {
             .child(quad(
                 Rect::from_min_size(Vec2::new(36.0, 72.0), Vec2::new(96.0, 56.0)),
                 rgb(0.82, 0.29, 0.24),
-            ))
-            .child(text(
-                Vec2::new(18.0, 18.0),
-                format!("FRAMES {}", window.frame()),
-                1.6,
-                rgb(0.76, 0.80, 0.84),
             ))
             .child(text(
                 Vec2::new(36.0, 144.0),

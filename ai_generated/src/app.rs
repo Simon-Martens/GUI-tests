@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -10,9 +11,14 @@ use crate::geom::Vec2;
 use crate::gpu::GpuState;
 use crate::ui::{InputState, Render, UiAction, UiMemory, Window};
 
-pub fn run<V: Render>(view: V) {
+#[derive(Clone, Copy, Default)]
+pub struct DebugOptions {
+    pub time_frames: bool,
+}
+
+pub fn run<V: Render>(view: V, debug: DebugOptions) {
     let event_loop = EventLoop::new().expect("failed to create event loop");
-    let mut app = App::new(view);
+    let mut app = App::new(view, debug);
     event_loop.run_app(&mut app).expect("failed to run app");
 }
 
@@ -22,19 +28,21 @@ struct App<V: Render> {
     gpu: Option<GpuState>,
     input: InputState,
     memory: UiMemory,
-    frames: u64,
+    frame_number: u64,
+    debug: DebugOptions,
     view: V,
 }
 
 impl<V: Render> App<V> {
-    fn new(view: V) -> Self {
+    fn new(view: V, debug: DebugOptions) -> Self {
         Self {
             window: None,
             window_id: None,
             gpu: None,
             input: InputState::default(),
             memory: UiMemory::default(),
-            frames: 0,
+            frame_number: 0,
+            debug,
             view,
         }
     }
@@ -120,16 +128,12 @@ impl<V: Render> App<V> {
             return;
         }
 
-        self.frames += 1;
+        self.frame_number += 1;
+        let frame_start = self.debug.time_frames.then(Instant::now);
         self.memory.begin_frame();
 
         let size = window.inner_size();
-        let mut ui_window = Window::new(
-            &mut self.memory,
-            &self.input,
-            Vec2::new(size.width as f32, size.height as f32),
-            self.frames,
-        );
+        let mut ui_window = Window::new(&mut self.memory, &self.input, Vec2::new(size.width as f32, size.height as f32));
         let output = ui_window.draw(&mut self.view);
         let _interaction = output.interaction;
         let _clicked = output.interaction.clicked;
@@ -152,6 +156,14 @@ impl<V: Render> App<V> {
             Err(wgpu::SurfaceError::Timeout | wgpu::SurfaceError::Other) => {}
         }
         self.input.end_frame();
+
+        if let Some(frame_start) = frame_start {
+            eprintln!(
+                "frame {}: {:.3} ms",
+                self.frame_number,
+                frame_start.elapsed().as_secs_f64() * 1000.0
+            );
+        }
     }
 
     fn apply_action(&mut self, action: UiAction) {

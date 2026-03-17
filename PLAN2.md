@@ -819,3 +819,131 @@ Expected architectural changes:
 - `paint` emits scene primitives instead of directly pushing final GPU-facing commands
 - renderer consumes the finalized scene/batches
 - clipping should move toward a scene-level concept instead of staying baked into individual commands
+
+### Next Step 3. Introduce an App / Entity / Context Ownership Model
+Goal:
+- stop treating the app as one retained root object plus ad hoc UI memory
+- separate long-lived application state from frame-local window state and element-local transient state
+
+Implement:
+- `App` as the owner of long-lived models and views
+- typed `Entity<T>` handles for retained objects
+- `Context<T>` for entity-scoped services and mutation
+- notification / subscription / typed event hooks between entities
+- window roots stored as handles to retained views rather than raw view structs
+
+Why this is next:
+- once the MVP has more than one meaningful retained object, shared state and cross-component communication become the next architectural pressure point
+- this is the main missing layer between the MVP plan and GPUI's broader software architecture
+
+Expected architectural changes:
+- retained state moves out of ad hoc root fields or `UiMemory` maps and into app-owned entities
+- `Render` is implemented by entity-backed views
+- frame-local `Window` remains frame-local
+- `Element`, `request_layout`, `prepaint`, and `paint` stay unchanged
+- actions target entity updates through contexts instead of directly mutating root-local state
+
+### Next Step 4. Add Retained Render Subtree Caching
+Goal:
+- reuse previously produced layout/prepaint/paint output for stable retained subtrees
+- move beyond full-frame regeneration without introducing screen-tile caching
+
+Implement:
+- a retained render boundary type backed by an entity/view handle
+- cache keys based on subtree inputs such as bounds, content mask, text style, and dependency dirtiness
+- stored reusable ranges for:
+  - prepaint output
+  - paint/scene output
+- dirty tracking so cached subtrees are invalidated when observed state changes
+
+Examples of good retained subtree boundaries:
+- a sidebar
+- a status bar
+- a menu or popup root
+- an editor pane
+- a large panel or window section
+
+Why this is next:
+- this is much closer to GPUI than caching arbitrary screen regions
+- views in this model are broad retained UI units, not tiny render primitives
+- subtree reuse preserves the existing layout/prepaint/paint model
+- it improves performance without introducing tile invalidation, compositing complexity, or stale hit-testing bugs
+
+Expected architectural changes:
+- root still rebuilds the logical tree each frame
+- some retained subtree nodes can skip fresh render/prepaint/paint work when clean
+- scene output can be replayed from the previous frame for cached subtrees
+- hitboxes, cursor state, and input handlers remain tied to reused prepaint/paint output
+
+### Next Step 5. Add Dirty / Invalidation-Driven Redraw
+Goal:
+- stop rebuilding frames continuously when nothing changed
+- redraw only when input, window state, or retained app state invalidates the frame
+
+Implement:
+- a coarse `needs_redraw` or `dirty` flag in the app shell
+- request redraw on:
+  - startup
+  - resize / scale changes
+  - cursor movement or cursor leaving the window
+  - mouse press / release
+  - app-state mutations caused by emitted `UiAction`s
+- stop using an unconditional poll loop for redraw
+
+Rules:
+- idle windows do not redraw
+- input events that can affect visuals invalidate the next frame
+- applying actions after `UiOutput` may request a follow-up redraw if retained state changed
+- this is coarse invalidation only, not yet entity/view dependency tracking
+
+Why this is next:
+- it is the first real performance step borrowed from GPUI
+- it reduces work immediately without changing the UI phase model
+- finer-grained invalidation can come later with retained entities/views
+
+### Next Step 6. Add Optional Debug Frame Timing
+Goal:
+- measure how long a frame takes without baking frame counters into the UI itself
+- make frame timing opt-in through a debug setting
+
+Implement:
+- a small app-level debug options struct
+- a `time_frames` flag
+- CPU-side frame timing with `std::time::Instant`
+- console logging in the redraw path that prints:
+  - frame number
+  - elapsed milliseconds for that frame
+
+Rules:
+- timing is disabled by default unless the debug option is set
+- this measures end-to-end app-side frame production and submission time, not true GPU execution time
+- no frame counter should be exposed through `Window` just for diagnostics
+
+Why this is next:
+- it gives immediate visibility into frame cost while keeping debugging concerns out of the UI model
+- it is cheap to add and useful while developing the later performance steps
+
+### Next Step 7. Add Stutter-Resistant Latest-State Frame Scheduling
+Goal:
+- avoid trying to "catch up" by effectively replaying missed frames after a short stall
+- make the UI recover by rendering the newest state once CPU time becomes available again
+
+Implement:
+- a latest-state-wins scheduling policy in the app/window frame driver
+- at most:
+  - one frame in progress
+  - one pending dirty bit for "draw again after this frame"
+- if invalidation happens while drawing, do not queue another full render job
+- instead mark the frame as dirty again and render once more from current state after the current frame completes
+- make animation and time-based UI state derive from wall-clock time, not from counting rendered frames
+
+Rules:
+- no queue of pending frame jobs
+- no attempt to display every missed intermediate state
+- after a short stall, render the newest state directly
+- animation progression must be based on elapsed time so missed frames collapse naturally
+
+Why this is next:
+- this makes the UI more resistant to short CPU stalls and transient contention
+- for GUI workloads, jumping to the latest state is usually less noticeable than replaying intermediate updates
+- it complements dirty/invalidation-driven redraw instead of replacing it
