@@ -4,4 +4,6 @@ mod gpu;
 mod text;
 mod ui;
 
-fn main() {}
+fn main() {
+    app::run();
+}

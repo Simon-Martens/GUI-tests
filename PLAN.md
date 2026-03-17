@@ -191,6 +191,9 @@ Add these from the start:
 Goal:
 - set up the project with the final file layout
 
+Status:
+- complete
+
 Do:
 1. Create the crate.
 2. Add the dependencies.
@@ -206,6 +209,9 @@ Why this stage exists:
 ### Stage 1. Window + GPU + One Rectangle
 Goal:
 - have the smallest visible working program
+
+Status:
+- complete
 
 Implement:
 - `geom.rs`
@@ -247,6 +253,9 @@ Do not add yet:
 ### Stage 2. Add Text, Still Without UI Abstractions
 Goal:
 - support the second final paint primitive before any UI architecture exists
+
+Status:
+- complete
 
 Implement:
 - `text.rs`
