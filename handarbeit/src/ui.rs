@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use taffy::prelude::{
-    AvailableSpace, NodeId, Position, Rect as TaffyRect, Size as TaffySize, Style, TaffyTree, auto,
-    length,
+    AvailableSpace, Display, FlexDirection, NodeId, Position, Rect as TaffyRect, Size as TaffySize,
+    Style, TaffyAuto, TaffyTree, auto, length,
 };
 
 use crate::geom::{Color, Point, Rect, Size};
@@ -196,7 +196,11 @@ impl Element for Quad {
     }
 }
 
-// THis is a wrapper around an element that can be drawn in three stages
+// This is a wrapper around an element that can be drawn in three stages. It allows for calling
+// layout and paint functions without knowing the concrete type that gets chain pushed to all these
+// functions, which can be different for every other type of element (Quad, Div etc). it just can
+// put in window and parent_origin, but dos know nothing about the concrete RequestLayoutState or
+// PrepaintState, which is very pratical if you want to call these functions on every type.
 pub struct AnyElement {
     inner: Box<dyn GenericElement>,
 }
@@ -218,8 +222,8 @@ impl AnyElement {
         self.inner.request_layout(window)
     }
 
-    fn prepaint(&mut self, bounds: Rect, window: &mut Window<'_>) {
-        self.inner.prepaint(bounds, window);
+    fn prepaint_from_parent(&mut self, parent_origin: Point, window: &mut Window<'_>) {
+        self.inner.prepaint_from_parent(parent_origin, window);
     }
 
     pub fn prepaint_as_root(
@@ -254,13 +258,163 @@ impl AnyElement {
             )
             .expect("compute root layout");
 
-        let bounds = layout_rect(&window.taffy, child, origin);
-        self.prepaint(bounds, window);
+        self.prepaint_from_parent(origin, window);
     }
 
     pub fn paint(&mut self, window: &mut Window<'_>) {
         self.inner.paint(window);
     }
+}
+
+pub struct Div {
+    #[allow(dead_code)]
+    id: Option<u64>,
+    position: Option<Point>,
+    size: Option<Size>,
+    padding: f32,
+    gap: f32,
+    background: Option<Color>,
+    #[allow(dead_code)]
+    clip_children: bool,
+    #[allow(dead_code)]
+    block_mouse: bool,
+    children: Vec<AnyElement>,
+}
+
+impl Div {
+    fn new() -> Self {
+        Self {
+            id: None,
+            position: None,
+            size: None,
+            padding: 0.0,
+            gap: 0.0,
+            background: None,
+            clip_children: true,
+            block_mouse: false,
+            children: Vec::new(),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn id(mut self, id_source: &str) -> Self {
+        self.id = Some(hash_str(id_source));
+        self
+    }
+
+    pub fn absolute(mut self, pos: Point) -> Self {
+        self.position = Some(pos);
+        self
+    }
+
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = Some(size);
+        self
+    }
+
+    pub fn padding(mut self, padding: f32) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.gap = gap;
+        self
+    }
+
+    pub fn bg(mut self, color: Color) -> Self {
+        self.background = Some(color);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn clip(mut self, clip_children: bool) -> Self {
+        self.clip_children = clip_children;
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn block_mouse(mut self) -> Self {
+        self.block_mouse = true;
+        self
+    }
+
+    fn style(&self) -> Style {
+        let mut style = Style {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            padding: all_sides(self.padding),
+            gap: TaffySize {
+                width: length(self.gap),
+                height: length(self.gap),
+            },
+            size: optional_size(self.size),
+            ..Default::default()
+        };
+
+        if let Some(pos) = self.position {
+            style.position = Position::Absolute;
+            style.inset = inset(pos);
+        }
+
+        style
+    }
+}
+
+impl ParentElement for Div {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.children.extend(elements);
+    }
+}
+
+impl Element for Div {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    // Here we use laffy to add the children into our layout as children.
+    fn request_layout(&mut self, window: &mut Window<'_>) -> (NodeId, Self::RequestLayoutState) {
+        let children = self
+            .children
+            .iter_mut()
+            .map(|child| child.request_layout(window))
+            .collect::<Vec<_>>();
+        let node = window
+            .taffy
+            .new_with_children(self.style(), &children)
+            .expect("create div node");
+        (node, ())
+    }
+
+    fn prepaint(
+        &mut self,
+        bounds: Rect,
+        _request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window<'_>,
+    ) -> Self::PrepaintState {
+        for child in &mut self.children {
+            child.prepaint_from_parent(bounds.min, window);
+        }
+    }
+
+    fn paint(
+        &mut self,
+        bounds: Rect,
+        _request_layout: &mut Self::RequestLayoutState,
+        _prepaint: &mut Self::PrepaintState,
+        window: &mut Window<'_>,
+    ) {
+        if let Some(color) = self.background {
+            window.draw_rect(bounds, color);
+        }
+
+        for child in &mut self.children {
+            child.paint(window);
+        }
+    }
+}
+
+pub fn div() -> Div {
+    Div::new()
 }
 
 pub fn quad(rect: Rect, color: Color) -> Quad {
@@ -269,7 +423,7 @@ pub fn quad(rect: Rect, color: Color) -> Quad {
 
 trait GenericElement {
     fn request_layout(&mut self, window: &mut Window<'_>) -> NodeId;
-    fn prepaint(&mut self, bounds: Rect, window: &mut Window<'_>);
+    fn prepaint_from_parent(&mut self, parent_origin: Point, window: &mut Window<'_>);
     fn paint(&mut self, window: &mut Window<'_>);
 }
 
@@ -291,7 +445,9 @@ impl<E: Element> GenericElement for ElementBox<E> {
         node_id
     }
 
-    fn prepaint(&mut self, bounds: Rect, window: &mut Window<'_>) {
+    fn prepaint_from_parent(&mut self, parent_origin: Point, window: &mut Window<'_>) {
+        let node_id = self.node_id.expect("request_layout must set a node id");
+        let bounds = layout_rect(&window.taffy, node_id, parent_origin);
         let request_layout = self
             .request_layout
             .as_mut()
@@ -425,6 +581,25 @@ fn inset(pos: Point) -> TaffyRect<taffy::style::LengthPercentageAuto> {
         right: auto(),
         top: length(pos.y),
         bottom: auto(),
+    }
+}
+
+fn all_sides(value: f32) -> TaffyRect<taffy::style::LengthPercentage> {
+    TaffyRect {
+        left: length(value),
+        right: length(value),
+        top: length(value),
+        bottom: length(value),
+    }
+}
+
+fn optional_size(size: Option<Size>) -> TaffySize<taffy::style::Dimension> {
+    match size {
+        Some(size) => TaffySize {
+            width: length(size.width),
+            height: length(size.height),
+        },
+        None => TaffySize::AUTO,
     }
 }
 

@@ -5,7 +5,7 @@ mod text;
 mod ui;
 
 use crate::geom::{Point, Rect, Size, rgb};
-use crate::ui::{AnyElement, IntoElement, Render, Window, quad};
+use crate::ui::{AnyElement, IntoElement, ParentElement, Render, Window, div, quad};
 
 fn main() {
     app::run(Demo);
@@ -22,11 +22,14 @@ struct Demo;
 // element-specific and can be called anytime.
 // This allows rendering in these three stages.
 impl Render for Demo {
-    fn render(&mut self, _window: &mut Window<'_>) -> AnyElement {
-        quad(
-            Rect::from_origin_and_size(Point::new(36.0, 72.0), Size::new(96.0, 56.0)),
-            rgb(0.82, 0.29, 0.24),
-        )
-        .into_any_element()
+    fn render(&mut self, window: &mut Window<'_>) -> AnyElement {
+        div()
+            .size(window.screen_size())
+            .bg(rgb(0.08, 0.09, 0.11))
+            .child(quad(
+                Rect::from_origin_and_size(Point::new(36.0, 72.0), Size::new(96.0, 56.0)),
+                rgb(0.82, 0.29, 0.24),
+            ))
+            .into_any_element()
     }
 }
