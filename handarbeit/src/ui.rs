@@ -2,13 +2,20 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use taffy::prelude::{
-    AvailableSpace, Display, FlexDirection, NodeId, Position, Rect as TaffyRect, Size as TaffySize,
-    Style, TaffyAuto, TaffyTree, auto, length,
+    AvailableSpace, NodeId, Position, Rect as TaffyRect, Size as TaffySize, Style, TaffyAuto, auto,
+    length,
 };
 
-use crate::geom::{Color, Point, Rect, Size, rgb};
-use crate::gpu::DrawCmd;
-use crate::text as text_system;
+use crate::geom::{Point, Rect, Size};
+
+pub mod absolute_text;
+pub mod button;
+pub mod div;
+pub mod label;
+pub mod quad;
+mod window;
+
+pub use window::Window;
 
 #[derive(Default)]
 pub struct InputState {
@@ -31,7 +38,7 @@ impl InputState {
 
 #[derive(Default)]
 pub struct UiMemory {
-    frame: u64,
+    pub(super) frame: u64,
     // These are not in input state bc they are calculated using hitboxes, not from the OS
     pub hovered: Option<u64>,
     pub active: Option<u64>,
@@ -75,7 +82,7 @@ impl UiMemory {
         *self.ints.entry(id).or_insert(0)
     }
 
-    fn touch_widget(&mut self, id: u64, rect: Rect) {
+    pub(super) fn touch_widget(&mut self, id: u64, rect: Rect) {
         let frame = self.frame;
         let state = self.widgets.entry(id).or_insert_with(|| WidgetState {
             id,
@@ -97,33 +104,10 @@ struct WidgetState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct LocalElementId(u64);
+pub(crate) struct LocalElementId(pub(crate) u64);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct GlobalElementId(u64);
-
-#[derive(Clone, Copy)]
-struct Hitbox {
-    id: Option<GlobalElementId>,
-    rect: Rect,
-    content_mask: Rect,
-    behavior: HitboxBehavior,
-    on_click: Option<UiAction>,
-}
-
-#[derive(Clone, Copy)]
-enum HitboxBehavior {
-    Clickable,
-    BlockMouse,
-}
-
-// Here we save IDs of clicked or hovered items in a frame
-#[derive(Clone, Copy, Debug, Default)]
-pub struct FrameInteraction {
-    pub hovered: Option<u64>,
-    pub active: Option<u64>,
-    pub clicked: Option<u64>,
-}
+pub(crate) struct GlobalElementId(pub(crate) u64);
 
 // Three stage rendering
 // - request_layout: currently trivial, later calculates width and heigt
@@ -204,69 +188,6 @@ pub trait ParentElement {
     }
 }
 
-pub struct Quad {
-    rect: Rect,
-    color: Color,
-    block_mouse: bool,
-}
-
-impl Quad {
-    pub fn new(rect: Rect, color: Color) -> Self {
-        Self {
-            rect,
-            color,
-            block_mouse: false,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn block_mouse(mut self) -> Self {
-        self.block_mouse = true;
-        self
-    }
-}
-
-impl Element for Quad {
-    type RequestLayoutState = ();
-    type PrepaintState = ();
-
-    fn request_layout(
-        &mut self,
-        _id: Option<GlobalElementId>,
-        window: &mut Window<'_>,
-    ) -> (NodeId, Self::RequestLayoutState) {
-        let node_id = window
-            .taffy
-            .new_leaf(absolute_leaf_style(self.rect.min, self.rect.size()))
-            .expect("create quad layout node");
-        (node_id, ())
-    }
-
-    fn prepaint(
-        &mut self,
-        _id: Option<GlobalElementId>,
-        bounds: Rect,
-        _request_layout: &mut Self::RequestLayoutState,
-        window: &mut Window<'_>,
-    ) -> Self::PrepaintState {
-        if self.block_mouse {
-            window.push_blocking_hitbox(bounds);
-        }
-        ()
-    }
-
-    fn paint(
-        &mut self,
-        _id: Option<GlobalElementId>,
-        bounds: Rect,
-        _request_layout: &mut Self::RequestLayoutState,
-        _prepaint: &mut Self::PrepaintState,
-        window: &mut Window<'_>,
-    ) {
-        window.draw_rect(bounds, self.color);
-    }
-}
-
 // This is a wrapper around an element that can be drawn in three stages. It allows for calling
 // layout and paint functions without knowing the concrete type that gets chain pushed to all these
 // functions, which can be different for every other type of element (Quad, Div etc). it just can
@@ -342,417 +263,6 @@ impl AnyElement {
     }
 }
 
-pub struct Div {
-    #[allow(dead_code)]
-    id: Option<LocalElementId>,
-    position: Option<Point>,
-    size: Option<Size>,
-    padding: f32,
-    gap: f32,
-    background: Option<Color>,
-    #[allow(dead_code)]
-    clip_children: bool,
-    #[allow(dead_code)]
-    block_mouse: bool,
-    children: Vec<AnyElement>,
-}
-
-impl Div {
-    fn new() -> Self {
-        Self {
-            id: None,
-            position: None,
-            size: None,
-            padding: 0.0,
-            gap: 0.0,
-            background: None,
-            clip_children: true,
-            block_mouse: false,
-            children: Vec::new(),
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn id(mut self, id_source: &str) -> Self {
-        self.id = Some(LocalElementId(hash_str(id_source)));
-        self
-    }
-
-    pub fn absolute(mut self, pos: Point) -> Self {
-        self.position = Some(pos);
-        self
-    }
-
-    pub fn size(mut self, size: Size) -> Self {
-        self.size = Some(size);
-        self
-    }
-
-    pub fn padding(mut self, padding: f32) -> Self {
-        self.padding = padding;
-        self
-    }
-
-    pub fn gap(mut self, gap: f32) -> Self {
-        self.gap = gap;
-        self
-    }
-
-    pub fn bg(mut self, color: Color) -> Self {
-        self.background = Some(color);
-        self
-    }
-
-    #[allow(dead_code)]
-    pub fn clip(mut self, clip_children: bool) -> Self {
-        self.clip_children = clip_children;
-        self
-    }
-
-    #[allow(dead_code)]
-    pub fn block_mouse(mut self) -> Self {
-        self.block_mouse = true;
-        self
-    }
-
-    fn style(&self) -> Style {
-        let mut style = Style {
-            display: Display::Flex,
-            flex_direction: FlexDirection::Column,
-            padding: all_sides(self.padding),
-            gap: TaffySize {
-                width: length(self.gap),
-                height: length(self.gap),
-            },
-            size: optional_size(self.size),
-            ..Default::default()
-        };
-
-        if let Some(pos) = self.position {
-            style.position = Position::Absolute;
-            style.inset = inset(pos);
-        }
-
-        style
-    }
-}
-
-impl ParentElement for Div {
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.children.extend(elements);
-    }
-}
-
-impl Element for Div {
-    type RequestLayoutState = ();
-    type PrepaintState = ();
-
-    fn id(&self) -> Option<LocalElementId> {
-        self.id
-    }
-
-    // Here we use laffy to add the children into our layout as children.
-    fn request_layout(
-        &mut self,
-        id: Option<GlobalElementId>,
-        window: &mut Window<'_>,
-    ) -> (NodeId, Self::RequestLayoutState) {
-        let children = self
-            .children
-            .iter_mut()
-            .map(|child| child.request_layout(id, window))
-            .collect::<Vec<_>>();
-        let node = window
-            .taffy
-            .new_with_children(self.style(), &children)
-            .expect("create div node");
-        (node, ())
-    }
-
-    fn prepaint(
-        &mut self,
-        _id: Option<GlobalElementId>,
-        bounds: Rect,
-        _request_layout: &mut Self::RequestLayoutState,
-        window: &mut Window<'_>,
-    ) -> Self::PrepaintState {
-        if self.block_mouse {
-            window.push_blocking_hitbox(bounds);
-        }
-        if self.clip_children {
-            window.push_content_mask(bounds);
-        }
-        for child in &mut self.children {
-            child.prepaint_from_parent(bounds.min, window);
-        }
-        if self.clip_children {
-            window.pop_content_mask();
-        }
-    }
-
-    fn paint(
-        &mut self,
-        _id: Option<GlobalElementId>,
-        bounds: Rect,
-        _request_layout: &mut Self::RequestLayoutState,
-        _prepaint: &mut Self::PrepaintState,
-        window: &mut Window<'_>,
-    ) {
-        if let Some(color) = self.background {
-            window.draw_rect(bounds, color);
-        }
-
-        if self.clip_children {
-            window.push_content_mask(bounds);
-        }
-        for child in &mut self.children {
-            child.paint(window);
-        }
-        if self.clip_children {
-            window.pop_content_mask();
-        }
-    }
-}
-
-pub fn div() -> Div {
-    Div::new()
-}
-
-pub fn quad(rect: Rect, color: Color) -> Quad {
-    Quad::new(rect, color)
-}
-
-pub struct AbsoluteText {
-    pos: Point,
-    text: String,
-    scale: f32,
-    color: Color,
-}
-
-impl AbsoluteText {
-    fn new(pos: Point, text: String, scale: f32, color: Color) -> Self {
-        Self {
-            pos,
-            text,
-            scale,
-            color,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct TextRequestLayoutState;
-
-impl Element for AbsoluteText {
-    type RequestLayoutState = TextRequestLayoutState;
-    type PrepaintState = ();
-
-    fn request_layout(
-        &mut self,
-        _id: Option<GlobalElementId>,
-        window: &mut Window<'_>,
-    ) -> (NodeId, Self::RequestLayoutState) {
-        let size = text_system::measure(&self.text, self.scale);
-        let node = window
-            .taffy
-            .new_leaf(absolute_leaf_style(self.pos, size))
-            .expect("create absolute text node");
-        (node, TextRequestLayoutState)
-    }
-
-    fn prepaint(
-        &mut self,
-        _id: Option<GlobalElementId>,
-        _bounds: Rect,
-        _request_layout: &mut Self::RequestLayoutState,
-        _window: &mut Window<'_>,
-    ) -> Self::PrepaintState {
-        ()
-    }
-
-    fn paint(
-        &mut self,
-        _id: Option<GlobalElementId>,
-        bounds: Rect,
-        _request_layout: &mut Self::RequestLayoutState,
-        _prepaint: &mut Self::PrepaintState,
-        window: &mut Window<'_>,
-    ) {
-        window.draw_text(bounds.min, &self.text, self.scale, self.color);
-    }
-}
-
-pub fn text(pos: Point, text: impl Into<String>, scale: f32, color: Color) -> AbsoluteText {
-    AbsoluteText::new(pos, text.into(), scale, color)
-}
-
-pub struct Label {
-    text: String,
-    scale: f32,
-    color: Color,
-}
-
-impl Label {
-    fn new(text: String, scale: f32, color: Color) -> Self {
-        Self { text, scale, color }
-    }
-}
-
-impl Element for Label {
-    type RequestLayoutState = TextRequestLayoutState;
-    type PrepaintState = ();
-
-    fn request_layout(
-        &mut self,
-        _id: Option<GlobalElementId>,
-        window: &mut Window<'_>,
-    ) -> (NodeId, Self::RequestLayoutState) {
-        let size = text_system::measure(&self.text, self.scale);
-        let node = window
-            .taffy
-            .new_leaf(Style {
-                size: TaffySize {
-                    width: length(size.width),
-                    height: length(size.height),
-                },
-                ..Default::default()
-            })
-            .expect("create label node");
-        (node, TextRequestLayoutState)
-    }
-
-    fn prepaint(
-        &mut self,
-        _id: Option<GlobalElementId>,
-        _bounds: Rect,
-        _request_layout: &mut Self::RequestLayoutState,
-        _window: &mut Window<'_>,
-    ) -> Self::PrepaintState {
-        ()
-    }
-
-    fn paint(
-        &mut self,
-        _id: Option<GlobalElementId>,
-        bounds: Rect,
-        _request_layout: &mut Self::RequestLayoutState,
-        _prepaint: &mut Self::PrepaintState,
-        window: &mut Window<'_>,
-    ) {
-        window.draw_text(bounds.min, &self.text, self.scale, self.color);
-    }
-}
-
-pub fn label(text: impl Into<String>) -> Label {
-    Label::new(text.into(), 1.5, rgb(0.89, 0.91, 0.94))
-}
-
-pub struct Button {
-    #[allow(dead_code)]
-    id: LocalElementId,
-    label: String,
-    scale: f32,
-    padding: Size,
-    #[allow(dead_code)]
-    on_click: Option<UiAction>,
-}
-
-pub struct ButtonRequestLayoutState {
-    text_size: Size,
-}
-
-impl Button {
-    fn new(id: LocalElementId, label: String, scale: f32) -> Self {
-        Self {
-            id,
-            label,
-            scale,
-            padding: Size::new(14.0, 9.0),
-            on_click: None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn on_click(mut self, action: UiAction) -> Self {
-        self.on_click = Some(action);
-        self
-    }
-}
-
-impl Element for Button {
-    type RequestLayoutState = ButtonRequestLayoutState;
-    type PrepaintState = ();
-
-    fn id(&self) -> Option<LocalElementId> {
-        Some(self.id)
-    }
-
-    fn request_layout(
-        &mut self,
-        _id: Option<GlobalElementId>,
-        window: &mut Window<'_>,
-    ) -> (NodeId, Self::RequestLayoutState) {
-        let text_size = text_system::measure(&self.label, self.scale);
-        let size = Size::new(
-            text_size.width + self.padding.width * 2.0,
-            text_size.height + self.padding.height * 2.0,
-        );
-        let node = window
-            .taffy
-            .new_leaf(Style {
-                size: TaffySize {
-                    width: length(size.width),
-                    height: length(size.height),
-                },
-                ..Default::default()
-            })
-            .expect("create button node");
-        (node, ButtonRequestLayoutState { text_size })
-    }
-
-    fn prepaint(
-        &mut self,
-        id: Option<GlobalElementId>,
-        bounds: Rect,
-        _request_layout: &mut Self::RequestLayoutState,
-        window: &mut Window<'_>,
-    ) -> Self::PrepaintState {
-        if let Some(id) = id {
-            let _ = window.push_clickable_hitbox(id, bounds, self.on_click);
-        }
-        ()
-    }
-
-    fn paint(
-        &mut self,
-        id: Option<GlobalElementId>,
-        bounds: Rect,
-        request_layout: &mut Self::RequestLayoutState,
-        _prepaint: &mut Self::PrepaintState,
-        window: &mut Window<'_>,
-    ) {
-        let id = id.expect("button must have global id");
-        let background = if window.is_active(id) {
-            rgb(0.93, 0.74, 0.45)
-        } else if window.is_hovered(id) {
-            rgb(0.36, 0.41, 0.49)
-        } else {
-            rgb(0.26, 0.30, 0.37)
-        };
-
-        window.draw_rect(bounds, background);
-        let text_pos = Point::new(
-            bounds.min.x + self.padding.width,
-            bounds.min.y + (bounds.height() - request_layout.text_size.height) * 0.5,
-        );
-        window.draw_text(text_pos, &self.label, self.scale, rgb(0.95, 0.96, 0.98));
-    }
-}
-
-pub fn button(id_source: &str, label: impl Into<String>) -> Button {
-    Button::new(LocalElementId(hash_str(id_source)), label.into(), 1.8)
-}
-
 trait GenericElement {
     fn request_layout(
         &mut self,
@@ -793,7 +303,7 @@ impl<E: Element> GenericElement for ElementBox<E> {
 
     fn prepaint_from_parent(&mut self, parent_origin: Point, window: &mut Window<'_>) {
         let node_id = self.node_id.expect("request_layout must set a node id");
-        let bounds = layout_rect(&window.taffy, node_id, parent_origin);
+        let bounds = window::layout_rect(&window.taffy, node_id, parent_origin);
         if let Some(id) = self.global_id {
             window.touch_widget(id, bounds);
         }
@@ -829,12 +339,6 @@ pub enum UiAction {
     BumpInt(u64),
 }
 
-pub struct UiOutput {
-    pub draw_list: Vec<DrawCmd>,
-    pub actions: Vec<UiAction>,
-    pub interaction: FrameInteraction,
-}
-
 // 'static = cant store things in a struct that implements Render, which has it's own short lifetime
 // and therefore determines the lifetime of the struct. It must be afully self-contained lifetime.
 // It must contain only 'static data (like most primitive structs do).
@@ -842,261 +346,11 @@ pub trait Render: 'static {
     fn render(&mut self, window: &mut Window<'_>) -> AnyElement;
 }
 
-pub struct Window<'a> {
-    // We will use the memory later on. We will cache element state and dimensions of taffy
-    // subtrees, also we will cache HarfBuzz shaping results here.
-    memory: &'a mut UiMemory,
-    input: &'a InputState,
-    screen_size: Size,
-    frame: u64,
-    taffy: TaffyTree<()>,
-    // Hitboxes: can be clocking (no mouse events registered underneath) and/or clickable (clickable
-    // elements like buttons or links). We save clicked or hovered ids.
-    // Hitboxes: can be blocking and/or clickable: blocking hitboxes prevent registering
-    // click items underneath. We collect them seperate to make hit testing very fast. Hit
-    // testing is done below in window with resolve hit and hit test functions.
-    hitboxes: Vec<Hitbox>,
-    // Here we store ids of hovered or clicked upon items.
-    interaction: FrameInteraction,
-    // Masks: made for clipping content.
-    // TODO: GPU clipping. Right now we do it on the CPU.
-    content_masks: Vec<Rect>,
-    // This will be part of our results pipeleine for rendering. All items can add and queue actions and
-    // here to be executed (or not) or drawn (or not). We do not execute from the items or in the
-    // render path directly, istead just queue actions.
-    actions: Vec<UiAction>,
-    draw_list: Vec<DrawCmd>,
-}
-
-// Window stores transient state and gets recreated eevery frame.
-// TODO: we have to reuse old state objects and not allocate this every frame.
-impl<'a> Window<'a> {
-    pub fn new(memory: &'a mut UiMemory, input: &'a InputState, screen_size: Size) -> Self {
-        let frame = memory.frame;
-        Self {
-            memory,
-            input,
-            screen_size,
-            frame,
-            taffy: TaffyTree::new(),
-            hitboxes: Vec::new(),
-            interaction: FrameInteraction::default(),
-            content_masks: vec![Rect::from_origin_and_size(Point::origin(), screen_size)],
-            actions: Vec::new(),
-            draw_list: Vec::new(),
-        }
-    }
-
-    pub fn screen_size(&self) -> Size {
-        self.screen_size
-    }
-
-    pub fn screen_rect(&self) -> Rect {
-        Rect::from_origin_and_size(Point::origin(), self.screen_size)
-    }
-
-    pub fn frame(&self) -> u64 {
-        self.frame
-    }
-
-    pub fn counter(&mut self, id_source: &str) -> i32 {
-        self.memory.get_int(root_id(id_source))
-    }
-
-    pub fn bump_counter_action(&self, id_source: &str) -> UiAction {
-        UiAction::BumpInt(root_id(id_source))
-    }
-
-    pub fn draw<R: Render>(&mut self, view: &mut R) -> UiOutput {
-        self.taffy = TaffyTree::new();
-        self.hitboxes.clear();
-        self.interaction = FrameInteraction::default();
-        self.content_masks.clear();
-        self.content_masks.push(self.screen_rect());
-        self.actions.clear();
-        self.draw_list.clear();
-
-        let mut root = view.render(self);
-        root.prepaint_as_root(Point::origin(), self.screen_size, self);
-        self.resolve_frame_interaction();
-        root.paint(self);
-
-        UiOutput {
-            draw_list: std::mem::take(&mut self.draw_list),
-            actions: std::mem::take(&mut self.actions),
-            interaction: self.interaction,
-        }
-    }
-
-    fn scoped_id(
-        &self,
-        parent_scope: Option<GlobalElementId>,
-        local_id: LocalElementId,
-    ) -> GlobalElementId {
-        match parent_scope {
-            Some(parent) => GlobalElementId(hash_u64(parent.0, local_id.0)),
-            None => GlobalElementId(local_id.0),
-        }
-    }
-
-    fn touch_widget(&mut self, id: GlobalElementId, rect: Rect) {
-        self.memory.touch_widget(id.0, rect);
-    }
-
-    fn current_content_mask(&self) -> Rect {
-        self.content_masks
-            .last()
-            .copied()
-            .unwrap_or_else(|| self.screen_rect())
-    }
-
-    fn push_content_mask(&mut self, mask: Rect) {
-        let next = self
-            .current_content_mask()
-            .intersection(&mask)
-            .unwrap_or_else(|| Rect::from_origin_and_size(mask.min, Size::new(0.0, 0.0)));
-        self.content_masks.push(next);
-    }
-
-    fn pop_content_mask(&mut self) {
-        if self.content_masks.len() > 1 {
-            self.content_masks.pop();
-        }
-    }
-
-    fn push_clickable_hitbox(
-        &mut self,
-        id: GlobalElementId,
-        rect: Rect,
-        action: Option<UiAction>,
-    ) -> usize {
-        let index = self.hitboxes.len();
-        self.hitboxes.push(Hitbox {
-            id: Some(id),
-            rect,
-            content_mask: self.current_content_mask(),
-            behavior: HitboxBehavior::Clickable,
-            on_click: action,
-        });
-        index
-    }
-
-    fn push_blocking_hitbox(&mut self, rect: Rect) {
-        self.hitboxes.push(Hitbox {
-            id: None,
-            rect,
-            content_mask: self.current_content_mask(),
-            behavior: HitboxBehavior::BlockMouse,
-            on_click: None,
-        });
-    }
-
-    fn is_hovered(&self, id: GlobalElementId) -> bool {
-        self.interaction.hovered == Some(id.0)
-    }
-
-    fn is_active(&self, id: GlobalElementId) -> bool {
-        self.interaction.active == Some(id.0) && self.input.mouse_down
-    }
-
-    fn resolve_interaction(&mut self) -> FrameInteraction {
-        let hovered_index = self.hit_test(self.input.mouse_pos);
-        let hovered = hovered_index
-            .and_then(|index| self.hitboxes[index].id)
-            .map(|id| id.0);
-        let previous_active = self.memory.active;
-
-        let active = if self.input.mouse_pressed {
-            hovered
-        } else if self.input.mouse_released {
-            None
-        } else if self.input.mouse_down {
-            previous_active
-        } else {
-            None
-        };
-
-        let clicked = if self.input.mouse_released && hovered == previous_active {
-            hovered
-        } else {
-            None
-        };
-
-        if let Some(index) = hovered_index {
-            let hitbox = self.hitboxes[index];
-            if hitbox.id.map(|id| id.0) == clicked {
-                if let Some(action) = hitbox.on_click {
-                    self.actions.push(action);
-                }
-            }
-        }
-
-        self.memory.hovered = hovered;
-        self.memory.active = active;
-
-        FrameInteraction {
-            hovered,
-            active,
-            clicked,
-        }
-    }
-
-    pub fn resolve_frame_interaction(&mut self) {
-        self.interaction = self.resolve_interaction();
-    }
-
-    fn hit_test(&self, point: Point) -> Option<usize> {
-        for (index, hitbox) in self.hitboxes.iter().enumerate().rev() {
-            let Some(visible_rect) = hitbox.rect.intersection(&hitbox.content_mask) else {
-                continue;
-            };
-            if visible_rect.contains(point) {
-                return match hitbox.behavior {
-                    HitboxBehavior::Clickable | HitboxBehavior::BlockMouse => Some(index),
-                };
-            }
-        }
-        None
-    }
-
-    pub fn draw_rect(&mut self, rect: Rect, color: Color) {
-        if let Some(rect) = rect.intersection(&self.current_content_mask()) {
-            self.draw_list.push(DrawCmd::Rect { rect, color });
-        }
-    }
-
-    pub fn draw_text(&mut self, pos: Point, text: impl Into<String>, scale: f32, color: Color) {
-        let clip_rect = self.current_content_mask();
-        if clip_rect.width() <= 0.0 || clip_rect.height() <= 0.0 {
-            return;
-        }
-        self.draw_list.push(DrawCmd::Text {
-            pos,
-            text: text.into(),
-            scale,
-            color,
-            clip_rect: Some(clip_rect),
-        });
-    }
-
-}
-
-fn root_id(id_source: &str) -> u64 {
+pub(super) fn root_id(id_source: &str) -> u64 {
     hash_str(id_source)
 }
 
-fn layout_rect(taffy: &TaffyTree<()>, node_id: NodeId, parent_origin: Point) -> Rect {
-    let layout = taffy.layout(node_id).expect("layout node");
-    Rect::from_origin_and_size(
-        Point::new(
-            parent_origin.x + layout.location.x,
-            parent_origin.y + layout.location.y,
-        ),
-        Size::new(layout.size.width, layout.size.height),
-    )
-}
-
-fn absolute_leaf_style(pos: Point, size: Size) -> Style {
+pub(super) fn absolute_leaf_style(pos: Point, size: Size) -> Style {
     Style {
         position: Position::Absolute,
         inset: inset(pos),
@@ -1108,7 +362,7 @@ fn absolute_leaf_style(pos: Point, size: Size) -> Style {
     }
 }
 
-fn inset(pos: Point) -> TaffyRect<taffy::style::LengthPercentageAuto> {
+pub(super) fn inset(pos: Point) -> TaffyRect<taffy::style::LengthPercentageAuto> {
     TaffyRect {
         left: length(pos.x),
         right: auto(),
@@ -1117,7 +371,7 @@ fn inset(pos: Point) -> TaffyRect<taffy::style::LengthPercentageAuto> {
     }
 }
 
-fn all_sides(value: f32) -> TaffyRect<taffy::style::LengthPercentage> {
+pub(super) fn all_sides(value: f32) -> TaffyRect<taffy::style::LengthPercentage> {
     TaffyRect {
         left: length(value),
         right: length(value),
@@ -1126,7 +380,7 @@ fn all_sides(value: f32) -> TaffyRect<taffy::style::LengthPercentage> {
     }
 }
 
-fn optional_size(size: Option<Size>) -> TaffySize<taffy::style::Dimension> {
+pub(super) fn optional_size(size: Option<Size>) -> TaffySize<taffy::style::Dimension> {
     match size {
         Some(size) => TaffySize {
             width: length(size.width),
@@ -1136,13 +390,13 @@ fn optional_size(size: Option<Size>) -> TaffySize<taffy::style::Dimension> {
     }
 }
 
-fn hash_str(value: &str) -> u64 {
+pub(super) fn hash_str(value: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     value.hash(&mut hasher);
     hasher.finish()
 }
 
-fn hash_u64(a: u64, b: u64) -> u64 {
+pub(super) fn hash_u64(a: u64, b: u64) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     a.hash(&mut hasher);
     b.hash(&mut hasher);

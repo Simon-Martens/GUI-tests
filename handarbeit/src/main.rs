@@ -5,9 +5,12 @@ mod text;
 mod ui;
 
 use crate::geom::{Point, Rect, Size, rgb};
-use crate::ui::{
-    AnyElement, IntoElement, ParentElement, Render, Window, button, div, label, quad, text,
-};
+use crate::ui::absolute_text::text;
+use crate::ui::button::button;
+use crate::ui::div::div;
+use crate::ui::label::label;
+use crate::ui::quad::quad;
+use crate::ui::{AnyElement, IntoElement, ParentElement, Render, Window};
 
 fn main() {
     app::run(Demo);
