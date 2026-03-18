@@ -151,11 +151,7 @@ impl<V: Render> App<V> {
             &self.input,
             Size::new(size.width as f32, size.height as f32),
         );
-        let mut root = self.view.render(&mut ui_window);
-        root.prepaint_as_root(Point::origin(), ui_window.screen_size(), &mut ui_window);
-        ui_window.resolve_frame_interaction();
-        root.paint(&mut ui_window);
-        let output = ui_window.finish();
+        let output = ui_window.draw(&mut self.view);
         let _interaction = output.interaction;
         let draw_list = output.draw_list;
         for action in output.actions {

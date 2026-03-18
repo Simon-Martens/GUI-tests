@@ -907,6 +907,27 @@ impl<'a> Window<'a> {
         UiAction::BumpInt(root_id(id_source))
     }
 
+    pub fn draw<R: Render>(&mut self, view: &mut R) -> UiOutput {
+        self.taffy = TaffyTree::new();
+        self.hitboxes.clear();
+        self.interaction = FrameInteraction::default();
+        self.content_masks.clear();
+        self.content_masks.push(self.screen_rect());
+        self.actions.clear();
+        self.draw_list.clear();
+
+        let mut root = view.render(self);
+        root.prepaint_as_root(Point::origin(), self.screen_size, self);
+        self.resolve_frame_interaction();
+        root.paint(self);
+
+        UiOutput {
+            draw_list: std::mem::take(&mut self.draw_list),
+            actions: std::mem::take(&mut self.actions),
+            interaction: self.interaction,
+        }
+    }
+
     fn scoped_id(
         &self,
         parent_scope: Option<GlobalElementId>,
@@ -1058,13 +1079,6 @@ impl<'a> Window<'a> {
         });
     }
 
-    pub fn finish(self) -> UiOutput {
-        UiOutput {
-            draw_list: self.draw_list,
-            actions: self.actions,
-            interaction: self.interaction,
-        }
-    }
 }
 
 fn root_id(id_source: &str) -> u64 {
