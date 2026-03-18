@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 
 use taffy::prelude::{
     AvailableSpace, NodeId, Position, Rect as TaffyRect, Size as TaffySize, Style, TaffyAuto, auto,
@@ -8,11 +9,10 @@ use taffy::prelude::{
 
 use crate::geom::{Point, Rect, Size};
 
-pub mod absolute_text;
 pub mod button;
 pub mod div;
-pub mod label;
 pub mod quad;
+pub mod text;
 mod window;
 
 pub use window::Window;
@@ -42,8 +42,7 @@ pub struct UiMemory {
     // These are not in input state bc they are calculated using hitboxes, not from the OS
     pub hovered: Option<u64>,
     pub active: Option<u64>,
-    ints: HashMap<u64, i32>,
-    widgets: HashMap<u64, WidgetState>,
+    widgets: HashMap<u64, u64>,
 }
 
 impl UiMemory {
@@ -54,10 +53,8 @@ impl UiMemory {
 
     pub fn end_frame(&mut self) {
         let frame = self.frame;
-        self.widgets.retain(|id, state| {
-            debug_assert_eq!(*id, state.id);
-            state.last_touched_frame == frame
-        });
+        self.widgets
+            .retain(|_, last_touched_frame| *last_touched_frame == frame);
 
         if self
             .active
@@ -74,33 +71,9 @@ impl UiMemory {
         }
     }
 
-    pub fn bump(&mut self, id: u64) {
-        *self.ints.entry(id).or_insert(0) += 1;
+    pub(super) fn touch_widget(&mut self, id: u64) {
+        self.widgets.insert(id, self.frame);
     }
-
-    pub fn get_int(&mut self, id: u64) -> i32 {
-        *self.ints.entry(id).or_insert(0)
-    }
-
-    pub(super) fn touch_widget(&mut self, id: u64, rect: Rect) {
-        let frame = self.frame;
-        let state = self.widgets.entry(id).or_insert_with(|| WidgetState {
-            id,
-            ..Default::default()
-        });
-        state.last_touched_frame = frame;
-        state.last_rect = Some(rect);
-    }
-}
-
-#[derive(Default)]
-#[allow(dead_code)]
-struct WidgetState {
-    id: u64,
-    last_touched_frame: u64,
-    #[allow(dead_code)]
-    // TODO: We don't use this for anything, maybe it might become a state buffer sometime?
-    last_rect: Option<Rect>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -114,7 +87,7 @@ pub(crate) struct GlobalElementId(pub(crate) u64);
 // - prepaint: will have to calculate hitboxes and interactove state
 // - paint: actually returns the primitives that graphics can paint
 // Any Element gors through these stages of layouting
-pub trait Element: 'static {
+pub trait Element<Action: 'static>: 'static {
     type RequestLayoutState: 'static;
     type PrepaintState: 'static;
 
@@ -125,7 +98,7 @@ pub trait Element: 'static {
     fn request_layout(
         &mut self,
         id: Option<GlobalElementId>,
-        window: &mut Window<'_>,
+        window: &mut Window<'_, Action>,
     ) -> (NodeId, Self::RequestLayoutState);
 
     fn prepaint(
@@ -133,7 +106,7 @@ pub trait Element: 'static {
         id: Option<GlobalElementId>,
         bounds: Rect,
         request_layout: &mut Self::RequestLayoutState,
-        window: &mut Window<'_>,
+        window: &mut Window<'_, Action>,
     ) -> Self::PrepaintState;
 
     fn paint(
@@ -142,7 +115,7 @@ pub trait Element: 'static {
         bounds: Rect,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
-        window: &mut Window<'_>,
+        window: &mut Window<'_, Action>,
     );
 }
 
@@ -150,28 +123,46 @@ pub trait Element: 'static {
 // libraries. It will allow for any element top be quietly converted into AnyElement behind the
 // scenes without being too early or visible to the user (this lib can just into() it, and if
 // the conversion is more complicated we can custom implement into_any_element()).
-pub trait IntoElement {
-    fn into_any_element(self) -> AnyElement;
+pub trait IntoElement<Action: 'static> {
+    fn into_any_element(self) -> AnyElement<Action>;
 }
 
-impl<T: Element> IntoElement for T {
-    fn into_any_element(self) -> AnyElement {
+impl<Action: 'static> IntoElement<Action> for AnyElement<Action> {
+    fn into_any_element(self) -> AnyElement<Action> {
+        self
+    }
+}
+
+impl<Action: 'static> IntoElement<Action> for button::Button<Action> {
+    fn into_any_element(self) -> AnyElement<Action> {
         AnyElement::new(self)
     }
 }
 
-impl IntoElement for AnyElement {
-    fn into_any_element(self) -> AnyElement {
-        self
+impl<Action: 'static> IntoElement<Action> for div::Div<Action> {
+    fn into_any_element(self) -> AnyElement<Action> {
+        AnyElement::new(self)
+    }
+}
+
+impl<Action: 'static> IntoElement<Action> for quad::Quad<Action> {
+    fn into_any_element(self) -> AnyElement<Action> {
+        AnyElement::new(self)
+    }
+}
+
+impl<Action: 'static> IntoElement<Action> for text::Text<Action> {
+    fn into_any_element(self) -> AnyElement<Action> {
+        AnyElement::new(self)
     }
 }
 
 // This struct will be helpful: if the extend function is implemented we will get child() and
 // children functions(), so that any element that is able to contain others can implement it.
-pub trait ParentElement {
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>);
+pub trait ParentElement<Action: 'static> {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement<Action>>);
 
-    fn child(mut self, child: impl IntoElement) -> Self
+    fn child(mut self, child: impl IntoElement<Action>) -> Self
     where
         Self: Sized,
     {
@@ -179,7 +170,7 @@ pub trait ParentElement {
         self
     }
 
-    fn children(mut self, children: impl IntoIterator<Item = impl IntoElement>) -> Self
+    fn children(mut self, children: impl IntoIterator<Item = impl IntoElement<Action>>) -> Self
     where
         Self: Sized,
     {
@@ -193,20 +184,21 @@ pub trait ParentElement {
 // functions, which can be different for every other type of element (Quad, Div etc). it just can
 // put in window and parent_origin, but dos know nothing about the concrete RequestLayoutState or
 // PrepaintState, which is very pratical if you want to call these functions on every type.
-pub struct AnyElement {
-    inner: Box<dyn GenericElement>,
+pub struct AnyElement<Action: 'static> {
+    inner: Box<dyn GenericElement<Action>>,
 }
 
-impl AnyElement {
-    pub fn new<E: Element>(element: E) -> Self {
+impl<Action: 'static> AnyElement<Action> {
+    pub fn new<E: Element<Action>>(element: E) -> Self {
         Self {
-            inner: Box::new(ElementBox::<E> {
+            inner: Box::new(ElementBox::<E, Action> {
                 element,
                 global_id: None,
                 node_id: None,
                 request_layout: None,
                 prepaint: None,
                 bounds: None,
+                marker: PhantomData,
             }),
         }
     }
@@ -214,12 +206,12 @@ impl AnyElement {
     fn request_layout(
         &mut self,
         parent_scope: Option<GlobalElementId>,
-        window: &mut Window<'_>,
+        window: &mut Window<'_, Action>,
     ) -> NodeId {
         self.inner.request_layout(parent_scope, window)
     }
 
-    fn prepaint_from_parent(&mut self, parent_origin: Point, window: &mut Window<'_>) {
+    fn prepaint_from_parent(&mut self, parent_origin: Point, window: &mut Window<'_, Action>) {
         self.inner.prepaint_from_parent(parent_origin, window);
     }
 
@@ -227,7 +219,7 @@ impl AnyElement {
         &mut self,
         origin: Point,
         available_size: Size,
-        window: &mut Window<'_>,
+        window: &mut Window<'_, Action>,
     ) {
         let child = self.request_layout(None, window);
         let root = window
@@ -258,35 +250,40 @@ impl AnyElement {
         self.prepaint_from_parent(origin, window);
     }
 
-    pub fn paint(&mut self, window: &mut Window<'_>) {
+    pub fn paint(&mut self, window: &mut Window<'_, Action>) {
         self.inner.paint(window);
     }
 }
 
-trait GenericElement {
+trait GenericElement<Action: 'static> {
     fn request_layout(
         &mut self,
         parent_scope: Option<GlobalElementId>,
-        window: &mut Window<'_>,
+        window: &mut Window<'_, Action>,
     ) -> NodeId;
-    fn prepaint_from_parent(&mut self, parent_origin: Point, window: &mut Window<'_>);
-    fn paint(&mut self, window: &mut Window<'_>);
+    fn prepaint_from_parent(&mut self, parent_origin: Point, window: &mut Window<'_, Action>);
+    fn paint(&mut self, window: &mut Window<'_, Action>);
 }
 
-struct ElementBox<E: Element> {
+struct ElementBox<E: Element<Action>, Action: 'static> {
     element: E,
     global_id: Option<GlobalElementId>,
     node_id: Option<NodeId>,
     request_layout: Option<E::RequestLayoutState>,
     prepaint: Option<E::PrepaintState>,
     bounds: Option<Rect>,
+    marker: PhantomData<fn() -> Action>,
 }
 
-impl<E: Element> GenericElement for ElementBox<E> {
+impl<E, Action> GenericElement<Action> for ElementBox<E, Action>
+where
+    E: Element<Action>,
+    Action: 'static,
+{
     fn request_layout(
         &mut self,
         parent_scope: Option<GlobalElementId>,
-        window: &mut Window<'_>,
+        window: &mut Window<'_, Action>,
     ) -> NodeId {
         let global_id = self
             .element
@@ -301,11 +298,11 @@ impl<E: Element> GenericElement for ElementBox<E> {
         node_id
     }
 
-    fn prepaint_from_parent(&mut self, parent_origin: Point, window: &mut Window<'_>) {
+    fn prepaint_from_parent(&mut self, parent_origin: Point, window: &mut Window<'_, Action>) {
         let node_id = self.node_id.expect("request_layout must set a node id");
         let bounds = window::layout_rect(&window.taffy, node_id, parent_origin);
         if let Some(id) = self.global_id {
-            window.touch_widget(id, bounds);
+            window.touch_widget(id);
         }
         let request_layout = self
             .request_layout
@@ -318,7 +315,7 @@ impl<E: Element> GenericElement for ElementBox<E> {
         self.prepaint = Some(prepaint);
     }
 
-    fn paint(&mut self, window: &mut Window<'_>) {
+    fn paint(&mut self, window: &mut Window<'_, Action>) {
         let _node_id = self.node_id.expect("request_layout must set a node id");
         let bounds = self.bounds.expect("prepaint must run before paint");
         let request_layout = self
@@ -334,20 +331,17 @@ impl<E: Element> GenericElement for ElementBox<E> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum UiAction {
-    BumpInt(u64),
-}
-
 // 'static = cant store things in a struct that implements Render, which has it's own short lifetime
 // and therefore determines the lifetime of the struct. It must be afully self-contained lifetime.
 // It must contain only 'static data (like most primitive structs do).
-pub trait Render: 'static {
-    fn render(&mut self, window: &mut Window<'_>) -> AnyElement;
+pub trait View: 'static {
+    type Action: 'static;
+
+    fn render(&mut self, window: &mut Window<'_, Self::Action>) -> AnyElement<Self::Action>;
 }
 
-pub(super) fn root_id(id_source: &str) -> u64 {
-    hash_str(id_source)
+pub trait Update<Action> {
+    fn update(&mut self, action: Action);
 }
 
 pub(super) fn absolute_leaf_style(pos: Point, size: Size) -> Style {

@@ -8,15 +8,21 @@ use winit::window::{Window as OsWindow, WindowAttributes, WindowId};
 
 use crate::geom::{Point, Size};
 use crate::gpu::GpuState;
-use crate::ui::{InputState, Render, UiAction, UiMemory, Window};
+use crate::ui::{InputState, UiMemory, Update, View, Window};
 
-pub fn run<V: Render>(view: V) {
+pub fn run<V>(view: V)
+where
+    V: View + Update<<V as View>::Action>,
+{
     let event_loop = EventLoop::new().expect("failed to create event loop");
     let mut app = App::new(view);
     event_loop.run_app(&mut app).expect("failed to run app");
 }
 
-struct App<V: Render> {
+struct App<V>
+where
+    V: View + Update<<V as View>::Action>,
+{
     window: Option<Arc<OsWindow>>,
     window_id: Option<WindowId>,
     gpu: Option<GpuState>,
@@ -25,7 +31,10 @@ struct App<V: Render> {
     view: V,
 }
 
-impl<V: Render> App<V> {
+impl<V> App<V>
+where
+    V: View + Update<<V as View>::Action>,
+{
     fn new(view: V) -> Self {
         Self {
             window: None,
@@ -37,14 +46,15 @@ impl<V: Render> App<V> {
         }
     }
 
-    fn apply_action(&mut self, action: UiAction) {
-        match action {
-            UiAction::BumpInt(id) => self.memory.bump(id),
-        }
+    fn apply_action(&mut self, action: V::Action) {
+        self.view.update(action);
     }
 }
 
-impl<V: Render> ApplicationHandler for App<V> {
+impl<V> ApplicationHandler for App<V>
+where
+    V: View + Update<<V as View>::Action>,
+{
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -126,7 +136,10 @@ impl<V: Render> ApplicationHandler for App<V> {
     }
 }
 
-impl<V: Render> App<V> {
+impl<V> App<V>
+where
+    V: View + Update<<V as View>::Action>,
+{
     // this is the actual drawing event. The drawing list will get tessellated into GPU primitives
     // to render.
     fn redraw(&mut self) {
@@ -152,7 +165,6 @@ impl<V: Render> App<V> {
             Size::new(size.width as f32, size.height as f32),
         );
         let output = ui_window.draw(&mut self.view);
-        let _interaction = output.interaction;
         let draw_list = output.draw_list;
         for action in output.actions {
             self.apply_action(action);

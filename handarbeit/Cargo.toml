@@ -7,7 +7,6 @@ edition = "2024"
 bytemuck = { version = "1.25.0", features = ["derive"] }
 euclid = "0.22.13"
 freetype-rs = "0.38.0"
-glam = "0.32.1"
 harfbuzz_rs_now = "2.3.2"
 pollster = "0.4.0"
 taffy = "0.9.2"

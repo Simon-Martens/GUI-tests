@@ -11,7 +11,7 @@ struct Hitbox {
     rect: Rect,
     content_mask: Rect,
     behavior: HitboxBehavior,
-    on_click: Option<UiAction>,
+    on_click: Option<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -25,22 +25,19 @@ enum HitboxBehavior {
 pub struct FrameInteraction {
     pub hovered: Option<u64>,
     pub active: Option<u64>,
-    pub clicked: Option<u64>,
 }
 
-pub struct UiOutput {
+pub struct UiOutput<Action> {
     pub draw_list: Vec<DrawCmd>,
-    pub actions: Vec<UiAction>,
-    pub interaction: FrameInteraction,
+    pub actions: Vec<Action>,
 }
 
-pub struct Window<'a> {
+pub struct Window<'a, Action: 'static> {
     // We will use the memory later on. We will cache element state and dimensions of taffy
     // subtrees, also we will cache HarfBuzz shaping results here.
     pub(super) memory: &'a mut UiMemory,
     pub(super) input: &'a InputState,
     pub(super) screen_size: Size,
-    frame: u64,
     pub(super) taffy: TaffyTree<()>,
     // Hitboxes: can be clocking (no mouse events registered underneath) and/or clickable (clickable
     // elements like buttons or links). We save clicked or hovered ids.
@@ -56,24 +53,24 @@ pub struct Window<'a> {
     // This will be part of our results pipeleine for rendering. All items can add and queue actions and
     // here to be executed (or not) or drawn (or not). We do not execute from the items or in the
     // render path directly, istead just queue actions.
-    actions: Vec<UiAction>,
+    click_actions: Vec<Option<Action>>,
+    actions: Vec<Action>,
     draw_list: Vec<DrawCmd>,
 }
 
 // Window stores transient state and gets recreated eevery frame.
 // TODO: we have to reuse old state objects and not allocate this every frame.
-impl<'a> Window<'a> {
+impl<'a, Action: 'static> Window<'a, Action> {
     pub fn new(memory: &'a mut UiMemory, input: &'a InputState, screen_size: Size) -> Self {
-        let frame = memory.frame;
         Self {
             memory,
             input,
             screen_size,
-            frame,
             taffy: TaffyTree::new(),
             hitboxes: Vec::new(),
             interaction: FrameInteraction::default(),
             content_masks: vec![Rect::from_origin_and_size(Point::origin(), screen_size)],
+            click_actions: Vec::new(),
             actions: Vec::new(),
             draw_list: Vec::new(),
         }
@@ -87,36 +84,24 @@ impl<'a> Window<'a> {
         Rect::from_origin_and_size(Point::origin(), self.screen_size)
     }
 
-    pub fn frame(&self) -> u64 {
-        self.frame
-    }
-
-    pub fn counter(&mut self, id_source: &str) -> i32 {
-        self.memory.get_int(root_id(id_source))
-    }
-
-    pub fn bump_counter_action(&self, id_source: &str) -> UiAction {
-        UiAction::BumpInt(root_id(id_source))
-    }
-
-    pub fn draw<R: Render>(&mut self, view: &mut R) -> UiOutput {
+    pub fn draw<R: View<Action = Action>>(&mut self, view: &mut R) -> UiOutput<Action> {
         self.taffy = TaffyTree::new();
         self.hitboxes.clear();
         self.interaction = FrameInteraction::default();
         self.content_masks.clear();
         self.content_masks.push(self.screen_rect());
+        self.click_actions.clear();
         self.actions.clear();
         self.draw_list.clear();
 
         let mut root = view.render(self);
         root.prepaint_as_root(Point::origin(), self.screen_size, self);
-        self.resolve_frame_interaction();
+        self.interaction = self.resolve_interaction();
         root.paint(self);
 
         UiOutput {
             draw_list: std::mem::take(&mut self.draw_list),
             actions: std::mem::take(&mut self.actions),
-            interaction: self.interaction,
         }
     }
 
@@ -131,8 +116,8 @@ impl<'a> Window<'a> {
         }
     }
 
-    pub(super) fn touch_widget(&mut self, id: GlobalElementId, rect: Rect) {
-        self.memory.touch_widget(id.0, rect);
+    pub(super) fn touch_widget(&mut self, id: GlobalElementId) {
+        self.memory.touch_widget(id.0);
     }
 
     pub(super) fn current_content_mask(&self) -> Rect {
@@ -160,17 +145,19 @@ impl<'a> Window<'a> {
         &mut self,
         id: GlobalElementId,
         rect: Rect,
-        action: Option<UiAction>,
-    ) -> usize {
-        let index = self.hitboxes.len();
+        action: Option<Action>,
+    ) {
+        let on_click = action.map(|action| {
+            self.click_actions.push(Some(action));
+            self.click_actions.len() - 1
+        });
         self.hitboxes.push(Hitbox {
             id: Some(id),
             rect,
             content_mask: self.current_content_mask(),
             behavior: HitboxBehavior::Clickable,
-            on_click: action,
+            on_click,
         });
-        index
     }
 
     pub(super) fn push_blocking_hitbox(&mut self, rect: Rect) {
@@ -217,8 +204,10 @@ impl<'a> Window<'a> {
         if let Some(index) = hovered_index {
             let hitbox = self.hitboxes[index];
             if hitbox.id.map(|id| id.0) == clicked {
-                if let Some(action) = hitbox.on_click {
-                    self.actions.push(action);
+                if let Some(action_index) = hitbox.on_click {
+                    if let Some(action) = self.click_actions[action_index].take() {
+                        self.actions.push(action);
+                    }
                 }
             }
         }
@@ -226,15 +215,7 @@ impl<'a> Window<'a> {
         self.memory.hovered = hovered;
         self.memory.active = active;
 
-        FrameInteraction {
-            hovered,
-            active,
-            clicked,
-        }
-    }
-
-    pub fn resolve_frame_interaction(&mut self) {
-        self.interaction = self.resolve_interaction();
+        FrameInteraction { hovered, active }
     }
 
     fn hit_test(&self, point: Point) -> Option<usize> {

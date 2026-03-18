@@ -1,19 +1,23 @@
+use std::marker::PhantomData;
+
 use crate::geom::Color;
 
 use super::*;
 
-pub struct Quad {
+pub struct Quad<Action: 'static> {
     rect: Rect,
     color: Color,
     block_mouse: bool,
+    marker: PhantomData<fn() -> Action>,
 }
 
-impl Quad {
+impl<Action: 'static> Quad<Action> {
     pub fn new(rect: Rect, color: Color) -> Self {
         Self {
             rect,
             color,
             block_mouse: false,
+            marker: PhantomData,
         }
     }
 
@@ -24,14 +28,14 @@ impl Quad {
     }
 }
 
-impl Element for Quad {
+impl<Action: 'static> Element<Action> for Quad<Action> {
     type RequestLayoutState = ();
     type PrepaintState = ();
 
     fn request_layout(
         &mut self,
         _id: Option<GlobalElementId>,
-        window: &mut Window<'_>,
+        window: &mut Window<'_, Action>,
     ) -> (NodeId, Self::RequestLayoutState) {
         let node_id = window
             .taffy
@@ -45,7 +49,7 @@ impl Element for Quad {
         _id: Option<GlobalElementId>,
         bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
-        window: &mut Window<'_>,
+        window: &mut Window<'_, Action>,
     ) -> Self::PrepaintState {
         if self.block_mouse {
             window.push_blocking_hitbox(bounds);
@@ -59,12 +63,12 @@ impl Element for Quad {
         bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
-        window: &mut Window<'_>,
+        window: &mut Window<'_, Action>,
     ) {
         window.draw_rect(bounds, self.color);
     }
 }
 
-pub fn quad(rect: Rect, color: Color) -> Quad {
+pub fn quad<Action: 'static>(rect: Rect, color: Color) -> Quad<Action> {
     Quad::new(rect, color)
 }

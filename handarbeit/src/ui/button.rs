@@ -5,21 +5,19 @@ use crate::text as text_system;
 
 use super::*;
 
-pub struct Button {
-    #[allow(dead_code)]
+pub struct Button<Action: 'static> {
     id: LocalElementId,
     label: String,
     scale: f32,
     padding: Size,
-    #[allow(dead_code)]
-    on_click: Option<UiAction>,
+    on_click: Option<Action>,
 }
 
 pub struct ButtonRequestLayoutState {
     text_size: Size,
 }
 
-impl Button {
+impl<Action: 'static> Button<Action> {
     fn new(id: LocalElementId, label: String, scale: f32) -> Self {
         Self {
             id,
@@ -30,14 +28,13 @@ impl Button {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn on_click(mut self, action: UiAction) -> Self {
+    pub fn on_click(mut self, action: Action) -> Self {
         self.on_click = Some(action);
         self
     }
 }
 
-impl Element for Button {
+impl<Action: 'static> Element<Action> for Button<Action> {
     type RequestLayoutState = ButtonRequestLayoutState;
     type PrepaintState = ();
 
@@ -48,7 +45,7 @@ impl Element for Button {
     fn request_layout(
         &mut self,
         _id: Option<GlobalElementId>,
-        window: &mut Window<'_>,
+        window: &mut Window<'_, Action>,
     ) -> (NodeId, Self::RequestLayoutState) {
         let text_size = text_system::measure(&self.label, self.scale);
         let size = Size::new(
@@ -73,10 +70,10 @@ impl Element for Button {
         id: Option<GlobalElementId>,
         bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
-        window: &mut Window<'_>,
+        window: &mut Window<'_, Action>,
     ) -> Self::PrepaintState {
         if let Some(id) = id {
-            let _ = window.push_clickable_hitbox(id, bounds, self.on_click);
+            window.push_clickable_hitbox(id, bounds, self.on_click.take());
         }
         ()
     }
@@ -87,7 +84,7 @@ impl Element for Button {
         bounds: Rect,
         request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
-        window: &mut Window<'_>,
+        window: &mut Window<'_, Action>,
     ) {
         let id = id.expect("button must have global id");
         let background = if window.is_active(id) {
@@ -107,6 +104,6 @@ impl Element for Button {
     }
 }
 
-pub fn button(id_source: &str, label: impl Into<String>) -> Button {
+pub fn button<Action: 'static>(id_source: &str, label: impl Into<String>) -> Button<Action> {
     Button::new(LocalElementId(hash_str(id_source)), label.into(), 1.8)
 }

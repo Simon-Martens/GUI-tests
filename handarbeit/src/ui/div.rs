@@ -4,7 +4,7 @@ use crate::geom::Color;
 
 use super::*;
 
-pub struct Div {
+pub struct Div<Action: 'static> {
     #[allow(dead_code)]
     id: Option<LocalElementId>,
     position: Option<Point>,
@@ -16,10 +16,10 @@ pub struct Div {
     clip_children: bool,
     #[allow(dead_code)]
     block_mouse: bool,
-    children: Vec<AnyElement>,
+    children: Vec<AnyElement<Action>>,
 }
 
-impl Div {
+impl<Action: 'static> Div<Action> {
     fn new() -> Self {
         Self {
             id: None,
@@ -99,13 +99,13 @@ impl Div {
     }
 }
 
-impl ParentElement for Div {
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+impl<Action: 'static> ParentElement<Action> for Div<Action> {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement<Action>>) {
         self.children.extend(elements);
     }
 }
 
-impl Element for Div {
+impl<Action: 'static> Element<Action> for Div<Action> {
     type RequestLayoutState = ();
     type PrepaintState = ();
 
@@ -117,7 +117,7 @@ impl Element for Div {
     fn request_layout(
         &mut self,
         id: Option<GlobalElementId>,
-        window: &mut Window<'_>,
+        window: &mut Window<'_, Action>,
     ) -> (NodeId, Self::RequestLayoutState) {
         let children = self
             .children
@@ -136,7 +136,7 @@ impl Element for Div {
         _id: Option<GlobalElementId>,
         bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
-        window: &mut Window<'_>,
+        window: &mut Window<'_, Action>,
     ) -> Self::PrepaintState {
         if self.block_mouse {
             window.push_blocking_hitbox(bounds);
@@ -158,7 +158,7 @@ impl Element for Div {
         bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
-        window: &mut Window<'_>,
+        window: &mut Window<'_, Action>,
     ) {
         if let Some(color) = self.background {
             window.draw_rect(bounds, color);
@@ -176,6 +176,6 @@ impl Element for Div {
     }
 }
 
-pub fn div() -> Div {
+pub fn div<Action: 'static>() -> Div<Action> {
     Div::new()
 }

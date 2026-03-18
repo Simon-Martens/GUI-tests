@@ -160,6 +160,16 @@
 - Renderer consumes only draw commands.
 - App applies emitted actions after frame production.
 
+## Far-Fetched Ideas
+These are possible ideas, but currently low-priority and not clearly more practical than simpler alternatives.
+
+### RenderOnce-Style Components
+- Idea: add a `RenderOnce` trait for one-frame component values that expand into normal elements.
+- Benefit: reusable typed subtree recipes that can feel more component-like than helper functions.
+- Limitation in `handarbeit`: these values would not naturally own retained state and would mostly need state passed in as plain arguments anyway.
+- Practical concern: in this codebase, a function that takes arguments and returns `Div` or `AnyElement` already covers most of the same use cases with less machinery.
+- Conclusion: interesting if the codebase grows many reusable composite widgets, but currently not compelling enough to prioritize over rendering, caching, or retained-state architecture work.
+
 ## Next Steps After MVP
 These are intentionally out of scope for the initial rebuild, but they are the next rendering upgrades to make after the MVP is stable.
 
@@ -220,10 +230,20 @@ Implement:
 - `Context<T>` for entity-scoped services and mutation
 - notification / subscription / typed event hooks between entities
 - window roots stored as handles to retained views rather than raw view structs
+- explicit read/update APIs so code can say:
+  - create an entity
+  - read an entity by handle
+  - update an entity by handle
+  - subscribe to another entity or event source
+- keep the frame boundary clear:
+  - `App` owns retained objects
+  - `Window` owns only current-frame state
+  - `Element`s remain transient tree nodes rebuilt every frame
 
 Why this is next:
 - once the MVP has more than one meaningful retained object, shared state and cross-component communication become the next architectural pressure point
 - this is the main missing layer between the MVP plan and GPUI's broader software architecture
+- it gives a real place for future caches, subscriptions, async results, and multi-panel state to live without inflating one root struct
 
 Expected architectural changes:
 - retained state moves out of ad hoc root fields or `UiMemory` maps and into app-owned entities
@@ -231,6 +251,15 @@ Expected architectural changes:
 - frame-local `Window` remains frame-local
 - `Element`, `request_layout`, `prepaint`, and `paint` stay unchanged
 - actions target entity updates through contexts instead of directly mutating root-local state
+- a view no longer needs to own all child state directly; it can hold handles to retained children/models
+- multiple windows or large retained panels become easier because ownership is handle-based instead of tree-position-based
+- dirtiness can become dependency-aware later because the app knows which retained objects were touched
+
+Possible minimal starting shape:
+- `Entity<T>` is just a typed stable handle
+- `App` stores typed slots or arenas for retained objects
+- `Context<T>` is the scoped mutation/read helper handed to retained views
+- root window stores one retained root view handle instead of a raw `Demo` value
 
 ### Next Step 4. Add Retained Render Subtree Caching
 Goal:
@@ -245,6 +274,16 @@ Implement:
   - paint/scene output
 - dirty tracking so cached subtrees are invalidated when observed state changes
 
+Possible easy version before the full entity system:
+- attach a cache entry to a stable `GlobalElementId`
+- store previous prepaint/paint output in `UiMemory`
+- reuse cached output when a coarse cache key still matches, for example:
+  - bounds
+  - content mask
+  - text style / scale inputs
+  - an explicit dirty flag or frame-stable dependency token
+- this simpler version would not give GPUI-level dependency tracking, but it can prove the mechanism before the ownership model is upgraded
+
 Examples of good retained subtree boundaries:
 - a sidebar
 - a status bar
@@ -257,6 +296,7 @@ Why this is next:
 - views in this model are broad retained UI units, not tiny render primitives
 - subtree reuse preserves the existing layout/prepaint/paint model
 - it improves performance without introducing tile invalidation, compositing complexity, or stale hit-testing bugs
+- the easy `GlobalElementId`-based version can be tried earlier, but the entity-backed version is the cleaner long-term form
 
 Expected architectural changes:
 - root still rebuilds the logical tree each frame
