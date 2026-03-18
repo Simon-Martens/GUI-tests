@@ -117,6 +117,7 @@ enum HitboxBehavior {
     BlockMouse,
 }
 
+// Here we save IDs of clicked or hovered items in a frame
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FrameInteraction {
     pub hovered: Option<u64>,
@@ -850,12 +851,19 @@ pub struct Window<'a> {
     frame: u64,
     taffy: TaffyTree<()>,
     // Hitboxes: can be clocking (no mouse events registered underneath) and/or clickable (clickable
-    // elements like buttons or links).
+    // elements like buttons or links). We save clicked or hovered ids.
+    // Hitboxes: can be blocking and/or clickable: blocking hitboxes prevent registering
+    // click items underneath. We collect them seperate to make hit testing very fast. Hit
+    // testing is done below in window with resolve hit and hit test functions.
     hitboxes: Vec<Hitbox>,
+    // Here we store ids of hovered or clicked upon items.
     interaction: FrameInteraction,
     // Masks: made for clipping content.
     // TODO: GPU clipping. Right now we do it on the CPU.
     content_masks: Vec<Rect>,
+    // This will be part of our results pipeleine for rendering. All items can add and queue actions and
+    // here to be executed (or not) or drawn (or not). We do not execute from the items or in the
+    // render path directly, istead just queue actions.
     actions: Vec<UiAction>,
     draw_list: Vec<DrawCmd>,
 }
@@ -871,9 +879,6 @@ impl<'a> Window<'a> {
             screen_size,
             frame,
             taffy: TaffyTree::new(),
-            // Hitboxes: can be blocking and/or clickable: blocking hitboxes prevent registering
-            // click items underneath. We collect them seperate to make hit testing very fast. Hit
-            // testing is done below in window with resolve hit and hit test functions.
             hitboxes: Vec::new(),
             interaction: FrameInteraction::default(),
             content_masks: vec![Rect::from_origin_and_size(Point::origin(), screen_size)],
