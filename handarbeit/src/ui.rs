@@ -8,6 +8,7 @@ use taffy::prelude::{
 
 use crate::geom::{Color, Point, Rect, Size};
 use crate::gpu::DrawCmd;
+use crate::text as text_system;
 
 #[derive(Default)]
 pub struct InputState {
@@ -421,6 +422,64 @@ pub fn quad(rect: Rect, color: Color) -> Quad {
     Quad::new(rect, color)
 }
 
+pub struct AbsoluteText {
+    pos: Point,
+    text: String,
+    scale: f32,
+    color: Color,
+}
+
+impl AbsoluteText {
+    fn new(pos: Point, text: String, scale: f32, color: Color) -> Self {
+        Self {
+            pos,
+            text,
+            scale,
+            color,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct TextRequestLayoutState;
+
+impl Element for AbsoluteText {
+    type RequestLayoutState = TextRequestLayoutState;
+    type PrepaintState = ();
+
+    fn request_layout(&mut self, window: &mut Window<'_>) -> (NodeId, Self::RequestLayoutState) {
+        let size = text_system::measure(&self.text, self.scale);
+        let node = window
+            .taffy
+            .new_leaf(absolute_leaf_style(self.pos, size))
+            .expect("create absolute text node");
+        (node, TextRequestLayoutState)
+    }
+
+    fn prepaint(
+        &mut self,
+        _bounds: Rect,
+        _request_layout: &mut Self::RequestLayoutState,
+        _window: &mut Window<'_>,
+    ) -> Self::PrepaintState {
+        ()
+    }
+
+    fn paint(
+        &mut self,
+        bounds: Rect,
+        _request_layout: &mut Self::RequestLayoutState,
+        _prepaint: &mut Self::PrepaintState,
+        window: &mut Window<'_>,
+    ) {
+        window.draw_text(bounds.min, &self.text, self.scale, self.color);
+    }
+}
+
+pub fn text(pos: Point, text: impl Into<String>, scale: f32, color: Color) -> AbsoluteText {
+    AbsoluteText::new(pos, text.into(), scale, color)
+}
+
 trait GenericElement {
     fn request_layout(&mut self, window: &mut Window<'_>) -> NodeId;
     fn prepaint_from_parent(&mut self, parent_origin: Point, window: &mut Window<'_>);
@@ -485,8 +544,9 @@ pub trait Render: 'static {
 }
 
 pub struct Window<'a> {
+    // We will use the memory later on. We will cache element state and dimensions of taffy
+    // subtrees, also we will cache HarfBuzz shaping results here.
     memory: &'a mut UiMemory,
-    #[allow(dead_code)]
     input: &'a InputState,
     screen_size: Size,
     frame: u64,

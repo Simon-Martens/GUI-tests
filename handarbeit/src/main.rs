@@ -5,7 +5,7 @@ mod text;
 mod ui;
 
 use crate::geom::{Point, Rect, Size, rgb};
-use crate::ui::{AnyElement, IntoElement, ParentElement, Render, Window, div, quad};
+use crate::ui::{AnyElement, IntoElement, ParentElement, Render, Window, div, quad, text};
 
 fn main() {
     app::run(Demo);
@@ -29,6 +29,12 @@ impl Render for Demo {
             .child(quad(
                 Rect::from_origin_and_size(Point::new(36.0, 72.0), Size::new(96.0, 56.0)),
                 rgb(0.82, 0.29, 0.24),
+            ))
+            .child(text(
+                Point::new(36.0, 144.0),
+                "DRAWN FROM main.rs",
+                1.4,
+                rgb(0.90, 0.92, 0.95),
             ))
             .into_any_element()
     }

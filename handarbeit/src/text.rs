@@ -22,6 +22,9 @@ pub struct GlyphRect {
     pub color: Color,
 }
 
+// TODO: here we need to make sure to cache the results of HarfBuzzes shaping algorithm, so
+// we dont have to measure multiple times (we do it when rendering anyways, but also need it
+// in layouting). Could use UIMemory for that.
 pub fn measure(text: &str, scale: f32) -> Size {
     if text.is_empty() {
         return Size::new(0.0, 0.0);
