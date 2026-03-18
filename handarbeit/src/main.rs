@@ -5,7 +5,9 @@ mod text;
 mod ui;
 
 use crate::geom::{Point, Rect, Size, rgb};
-use crate::ui::{AnyElement, IntoElement, ParentElement, Render, Window, div, label, quad, text};
+use crate::ui::{
+    AnyElement, IntoElement, ParentElement, Render, Window, button, div, label, quad, text,
+};
 
 fn main() {
     app::run(Demo);
@@ -42,7 +44,8 @@ impl Render for Demo {
                     .padding(18.0)
                     .gap(12.0)
                     .bg(rgb(0.14, 0.16, 0.20))
-                    .child(label("WIDTH FROM CHILDREN")),
+                    .child(label("WIDTH FROM CHILDREN"))
+                    .child(button("button", "BUTTON")),
             )
             .into_any_element()
     }
