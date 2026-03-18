@@ -102,6 +102,21 @@ pub(crate) struct LocalElementId(u64);
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct GlobalElementId(u64);
 
+#[derive(Clone, Copy)]
+struct Hitbox {
+    id: Option<GlobalElementId>,
+    rect: Rect,
+    content_mask: Rect,
+    behavior: HitboxBehavior,
+    on_click: Option<UiAction>,
+}
+
+#[derive(Clone, Copy)]
+enum HitboxBehavior {
+    Clickable,
+    BlockMouse,
+}
+
 // Three stage rendering
 // - request_layout: currently trivial, later calculates width and heigt
 // - prepaint: will have to calculate hitboxes and interactove state
@@ -184,11 +199,22 @@ pub trait ParentElement {
 pub struct Quad {
     rect: Rect,
     color: Color,
+    block_mouse: bool,
 }
 
 impl Quad {
     pub fn new(rect: Rect, color: Color) -> Self {
-        Self { rect, color }
+        Self {
+            rect,
+            color,
+            block_mouse: false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn block_mouse(mut self) -> Self {
+        self.block_mouse = true;
+        self
     }
 }
 
@@ -211,10 +237,13 @@ impl Element for Quad {
     fn prepaint(
         &mut self,
         _id: Option<GlobalElementId>,
-        _bounds: Rect,
+        bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
-        _window: &mut Window<'_>,
+        window: &mut Window<'_>,
     ) -> Self::PrepaintState {
+        if self.block_mouse {
+            window.push_blocking_hitbox(bounds);
+        }
         ()
     }
 
@@ -439,6 +468,9 @@ impl Element for Div {
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window<'_>,
     ) -> Self::PrepaintState {
+        if self.block_mouse {
+            window.push_blocking_hitbox(bounds);
+        }
         for child in &mut self.children {
             child.prepaint_from_parent(bounds.min, window);
         }
@@ -660,11 +692,14 @@ impl Element for Button {
 
     fn prepaint(
         &mut self,
-        _id: Option<GlobalElementId>,
-        _bounds: Rect,
+        id: Option<GlobalElementId>,
+        bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
-        _window: &mut Window<'_>,
+        window: &mut Window<'_>,
     ) -> Self::PrepaintState {
+        if let Some(id) = id {
+            let _ = window.push_clickable_hitbox(id, bounds, self.on_click);
+        }
         ()
     }
 
@@ -780,6 +815,7 @@ pub struct Window<'a> {
     screen_size: Size,
     frame: u64,
     taffy: TaffyTree<()>,
+    hitboxes: Vec<Hitbox>,
     draw_list: Vec<DrawCmd>,
 }
 
@@ -794,6 +830,9 @@ impl<'a> Window<'a> {
             screen_size,
             frame,
             taffy: TaffyTree::new(),
+            // Hitboxes: can be blocking and/or clickable: blocking hitboxes prevent registering
+            // click items underneath.
+            hitboxes: Vec::new(),
             draw_list: Vec::new(),
         }
     }
@@ -831,6 +870,33 @@ impl<'a> Window<'a> {
 
     fn touch_widget(&mut self, id: GlobalElementId, rect: Rect) {
         self.memory.touch_widget(id.0, rect);
+    }
+
+    fn push_clickable_hitbox(
+        &mut self,
+        id: GlobalElementId,
+        rect: Rect,
+        action: Option<UiAction>,
+    ) -> usize {
+        let index = self.hitboxes.len();
+        self.hitboxes.push(Hitbox {
+            id: Some(id),
+            rect,
+            content_mask: self.screen_rect(),
+            behavior: HitboxBehavior::Clickable,
+            on_click: action,
+        });
+        index
+    }
+
+    fn push_blocking_hitbox(&mut self, rect: Rect) {
+        self.hitboxes.push(Hitbox {
+            id: None,
+            rect,
+            content_mask: self.screen_rect(),
+            behavior: HitboxBehavior::BlockMouse,
+            on_click: None,
+        });
     }
 
     pub fn draw_rect(&mut self, rect: Rect, color: Color) {
