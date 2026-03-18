@@ -117,6 +117,13 @@ enum HitboxBehavior {
     BlockMouse,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FrameInteraction {
+    pub hovered: Option<u64>,
+    pub active: Option<u64>,
+    pub clicked: Option<u64>,
+}
+
 // Three stage rendering
 // - request_layout: currently trivial, later calculates width and heigt
 // - prepaint: will have to calculate hitboxes and interactove state
@@ -717,13 +724,22 @@ impl Element for Button {
 
     fn paint(
         &mut self,
-        _id: Option<GlobalElementId>,
+        id: Option<GlobalElementId>,
         bounds: Rect,
         request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
         window: &mut Window<'_>,
     ) {
-        window.draw_rect(bounds, rgb(0.26, 0.30, 0.37));
+        let id = id.expect("button must have global id");
+        let background = if window.is_active(id) {
+            rgb(0.93, 0.74, 0.45)
+        } else if window.is_hovered(id) {
+            rgb(0.36, 0.41, 0.49)
+        } else {
+            rgb(0.26, 0.30, 0.37)
+        };
+
+        window.draw_rect(bounds, background);
         let text_pos = Point::new(
             bounds.min.x + self.padding.width,
             bounds.min.y + (bounds.height() - request_layout.text_size.height) * 0.5,
@@ -830,9 +846,12 @@ pub struct Window<'a> {
     // Hitboxes: can be clocking (no mouse events registered underneath) and/or clickable (clickable
     // elements like buttons or links).
     hitboxes: Vec<Hitbox>,
+    interaction: FrameInteraction,
     // Masks: made for clipping content.
     // TODO: GPU clipping. Right now we do it on the CPU.
     content_masks: Vec<Rect>,
+    #[allow(dead_code)]
+    actions: Vec<UiAction>,
     draw_list: Vec<DrawCmd>,
 }
 
@@ -848,9 +867,12 @@ impl<'a> Window<'a> {
             frame,
             taffy: TaffyTree::new(),
             // Hitboxes: can be blocking and/or clickable: blocking hitboxes prevent registering
-            // click items underneath.
+            // click items underneath. We collect them seperate to make hit testing very fast. Hit
+            // testing is done below in window with resolve hit and hit test functions.
             hitboxes: Vec::new(),
+            interaction: FrameInteraction::default(),
             content_masks: vec![Rect::from_origin_and_size(Point::origin(), screen_size)],
+            actions: Vec::new(),
             draw_list: Vec::new(),
         }
     }
@@ -936,6 +958,74 @@ impl<'a> Window<'a> {
             behavior: HitboxBehavior::BlockMouse,
             on_click: None,
         });
+    }
+
+    fn is_hovered(&self, id: GlobalElementId) -> bool {
+        self.interaction.hovered == Some(id.0)
+    }
+
+    fn is_active(&self, id: GlobalElementId) -> bool {
+        self.interaction.active == Some(id.0) && self.input.mouse_down
+    }
+
+    fn resolve_interaction(&mut self) -> FrameInteraction {
+        let hovered_index = self.hit_test(self.input.mouse_pos);
+        let hovered = hovered_index
+            .and_then(|index| self.hitboxes[index].id)
+            .map(|id| id.0);
+        let previous_active = self.memory.active;
+
+        let active = if self.input.mouse_pressed {
+            hovered
+        } else if self.input.mouse_released {
+            None
+        } else if self.input.mouse_down {
+            previous_active
+        } else {
+            None
+        };
+
+        let clicked = if self.input.mouse_released && hovered == previous_active {
+            hovered
+        } else {
+            None
+        };
+
+        if let Some(index) = hovered_index {
+            let hitbox = self.hitboxes[index];
+            if hitbox.id.map(|id| id.0) == clicked {
+                if let Some(action) = hitbox.on_click {
+                    self.actions.push(action);
+                }
+            }
+        }
+
+        self.memory.hovered = hovered;
+        self.memory.active = active;
+
+        FrameInteraction {
+            hovered,
+            active,
+            clicked,
+        }
+    }
+
+    pub fn resolve_frame_interaction(&mut self) {
+        self.interaction = self.resolve_interaction();
+    }
+
+    fn hit_test(&self, point: Point) -> Option<usize> {
+        for (index, hitbox) in self.hitboxes.iter().enumerate().rev() {
+            let Some(visible_rect) = hitbox.rect.intersection(&hitbox.content_mask) else {
+                continue;
+            };
+            if visible_rect.contains(point) {
+                return match hitbox.behavior {
+                    HitboxBehavior::Clickable | HitboxBehavior::BlockMouse => Some(index),
+                };
+            }
+        }
+        None
     }
 
     pub fn draw_rect(&mut self, rect: Rect, color: Color) {

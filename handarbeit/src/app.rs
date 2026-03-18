@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window as OsWindow, WindowAttributes, WindowId};
 
@@ -73,6 +73,27 @@ impl<V: Render> ApplicationHandler for App<V> {
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CursorMoved { position, .. } => {
+                self.input.mouse_pos = Point::new(position.x as f32, position.y as f32);
+            }
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Left,
+                ..
+            } => match state {
+                ElementState::Pressed => {
+                    if !self.input.mouse_down {
+                        self.input.mouse_down = true;
+                        self.input.mouse_pressed = true;
+                        self.input.press_pos = Some(self.input.mouse_pos);
+                    }
+                }
+                ElementState::Released => {
+                    self.input.mouse_down = false;
+                    self.input.mouse_released = true;
+                    self.input.release_pos = Some(self.input.mouse_pos);
+                }
+            },
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = &mut self.gpu {
                     gpu.resize(size);
@@ -126,6 +147,7 @@ impl<V: Render> App<V> {
         );
         let mut root = self.view.render(&mut ui_window);
         root.prepaint_as_root(Point::origin(), ui_window.screen_size(), &mut ui_window);
+        ui_window.resolve_frame_interaction();
         root.paint(&mut ui_window);
         let draw_list = ui_window.finish();
         self.memory.end_frame();
