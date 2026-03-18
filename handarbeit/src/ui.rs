@@ -828,6 +828,12 @@ pub enum UiAction {
     BumpInt(u64),
 }
 
+pub struct UiOutput {
+    pub draw_list: Vec<DrawCmd>,
+    pub actions: Vec<UiAction>,
+    pub interaction: FrameInteraction,
+}
+
 // 'static = cant store things in a struct that implements Render, which has it's own short lifetime
 // and therefore determines the lifetime of the struct. It must be afully self-contained lifetime.
 // It must contain only 'static data (like most primitive structs do).
@@ -850,7 +856,6 @@ pub struct Window<'a> {
     // Masks: made for clipping content.
     // TODO: GPU clipping. Right now we do it on the CPU.
     content_masks: Vec<Rect>,
-    #[allow(dead_code)]
     actions: Vec<UiAction>,
     draw_list: Vec<DrawCmd>,
 }
@@ -1048,8 +1053,12 @@ impl<'a> Window<'a> {
         });
     }
 
-    pub fn finish(self) -> Vec<DrawCmd> {
-        self.draw_list
+    pub fn finish(self) -> UiOutput {
+        UiOutput {
+            draw_list: self.draw_list,
+            actions: self.actions,
+            interaction: self.interaction,
+        }
     }
 }
 

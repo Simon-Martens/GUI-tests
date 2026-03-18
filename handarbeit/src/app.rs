@@ -8,7 +8,7 @@ use winit::window::{Window as OsWindow, WindowAttributes, WindowId};
 
 use crate::geom::{Point, Size};
 use crate::gpu::GpuState;
-use crate::ui::{InputState, Render, UiMemory, Window};
+use crate::ui::{InputState, Render, UiAction, UiMemory, Window};
 
 pub fn run<V: Render>(view: V) {
     let event_loop = EventLoop::new().expect("failed to create event loop");
@@ -34,6 +34,12 @@ impl<V: Render> App<V> {
             input: InputState::default(),
             memory: UiMemory::default(),
             view,
+        }
+    }
+
+    fn apply_action(&mut self, action: UiAction) {
+        match action {
+            UiAction::BumpInt(id) => self.memory.bump(id),
         }
     }
 }
@@ -149,7 +155,12 @@ impl<V: Render> App<V> {
         root.prepaint_as_root(Point::origin(), ui_window.screen_size(), &mut ui_window);
         ui_window.resolve_frame_interaction();
         root.paint(&mut ui_window);
-        let draw_list = ui_window.finish();
+        let output = ui_window.finish();
+        let _interaction = output.interaction;
+        let draw_list = output.draw_list;
+        for action in output.actions {
+            self.apply_action(action);
+        }
         self.memory.end_frame();
         self.input.end_frame();
 
