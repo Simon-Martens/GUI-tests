@@ -74,6 +74,16 @@ impl UiMemory {
     pub fn get_int(&mut self, id: u64) -> i32 {
         *self.ints.entry(id).or_insert(0)
     }
+
+    fn touch_widget(&mut self, id: u64, rect: Rect) {
+        let frame = self.frame;
+        let state = self.widgets.entry(id).or_insert_with(|| WidgetState {
+            id,
+            ..Default::default()
+        });
+        state.last_touched_frame = frame;
+        state.last_rect = Some(rect);
+    }
 }
 
 #[derive(Default)]
@@ -82,8 +92,15 @@ struct WidgetState {
     id: u64,
     last_touched_frame: u64,
     #[allow(dead_code)]
+    // TODO: We don't use this for anything, maybe it might become a state buffer sometime?
     last_rect: Option<Rect>,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LocalElementId(u64);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct GlobalElementId(u64);
 
 // Three stage rendering
 // - request_layout: currently trivial, later calculates width and heigt
@@ -94,10 +111,19 @@ pub trait Element: 'static {
     type RequestLayoutState: 'static;
     type PrepaintState: 'static;
 
-    fn request_layout(&mut self, window: &mut Window<'_>) -> (NodeId, Self::RequestLayoutState);
+    fn id(&self) -> Option<LocalElementId> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        id: Option<GlobalElementId>,
+        window: &mut Window<'_>,
+    ) -> (NodeId, Self::RequestLayoutState);
 
     fn prepaint(
         &mut self,
+        id: Option<GlobalElementId>,
         bounds: Rect,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window<'_>,
@@ -105,6 +131,7 @@ pub trait Element: 'static {
 
     fn paint(
         &mut self,
+        id: Option<GlobalElementId>,
         bounds: Rect,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
@@ -169,7 +196,11 @@ impl Element for Quad {
     type RequestLayoutState = ();
     type PrepaintState = ();
 
-    fn request_layout(&mut self, window: &mut Window<'_>) -> (NodeId, Self::RequestLayoutState) {
+    fn request_layout(
+        &mut self,
+        _id: Option<GlobalElementId>,
+        window: &mut Window<'_>,
+    ) -> (NodeId, Self::RequestLayoutState) {
         let node_id = window
             .taffy
             .new_leaf(absolute_leaf_style(self.rect.min, self.rect.size()))
@@ -179,6 +210,7 @@ impl Element for Quad {
 
     fn prepaint(
         &mut self,
+        _id: Option<GlobalElementId>,
         _bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
         _window: &mut Window<'_>,
@@ -188,6 +220,7 @@ impl Element for Quad {
 
     fn paint(
         &mut self,
+        _id: Option<GlobalElementId>,
         bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
@@ -211,6 +244,7 @@ impl AnyElement {
         Self {
             inner: Box::new(ElementBox::<E> {
                 element,
+                global_id: None,
                 node_id: None,
                 request_layout: None,
                 prepaint: None,
@@ -219,8 +253,12 @@ impl AnyElement {
         }
     }
 
-    fn request_layout(&mut self, window: &mut Window<'_>) -> NodeId {
-        self.inner.request_layout(window)
+    fn request_layout(
+        &mut self,
+        parent_scope: Option<GlobalElementId>,
+        window: &mut Window<'_>,
+    ) -> NodeId {
+        self.inner.request_layout(parent_scope, window)
     }
 
     fn prepaint_from_parent(&mut self, parent_origin: Point, window: &mut Window<'_>) {
@@ -233,7 +271,7 @@ impl AnyElement {
         available_size: Size,
         window: &mut Window<'_>,
     ) {
-        let child = self.request_layout(window);
+        let child = self.request_layout(None, window);
         let root = window
             .taffy
             .new_with_children(
@@ -269,7 +307,7 @@ impl AnyElement {
 
 pub struct Div {
     #[allow(dead_code)]
-    id: Option<u64>,
+    id: Option<LocalElementId>,
     position: Option<Point>,
     size: Option<Size>,
     padding: f32,
@@ -299,7 +337,7 @@ impl Div {
 
     #[allow(dead_code)]
     pub fn id(mut self, id_source: &str) -> Self {
-        self.id = Some(hash_str(id_source));
+        self.id = Some(LocalElementId(hash_str(id_source)));
         self
     }
 
@@ -372,12 +410,20 @@ impl Element for Div {
     type RequestLayoutState = ();
     type PrepaintState = ();
 
+    fn id(&self) -> Option<LocalElementId> {
+        self.id
+    }
+
     // Here we use laffy to add the children into our layout as children.
-    fn request_layout(&mut self, window: &mut Window<'_>) -> (NodeId, Self::RequestLayoutState) {
+    fn request_layout(
+        &mut self,
+        id: Option<GlobalElementId>,
+        window: &mut Window<'_>,
+    ) -> (NodeId, Self::RequestLayoutState) {
         let children = self
             .children
             .iter_mut()
-            .map(|child| child.request_layout(window))
+            .map(|child| child.request_layout(id, window))
             .collect::<Vec<_>>();
         let node = window
             .taffy
@@ -388,6 +434,7 @@ impl Element for Div {
 
     fn prepaint(
         &mut self,
+        _id: Option<GlobalElementId>,
         bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window<'_>,
@@ -399,6 +446,7 @@ impl Element for Div {
 
     fn paint(
         &mut self,
+        _id: Option<GlobalElementId>,
         bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
@@ -447,7 +495,11 @@ impl Element for AbsoluteText {
     type RequestLayoutState = TextRequestLayoutState;
     type PrepaintState = ();
 
-    fn request_layout(&mut self, window: &mut Window<'_>) -> (NodeId, Self::RequestLayoutState) {
+    fn request_layout(
+        &mut self,
+        _id: Option<GlobalElementId>,
+        window: &mut Window<'_>,
+    ) -> (NodeId, Self::RequestLayoutState) {
         let size = text_system::measure(&self.text, self.scale);
         let node = window
             .taffy
@@ -458,6 +510,7 @@ impl Element for AbsoluteText {
 
     fn prepaint(
         &mut self,
+        _id: Option<GlobalElementId>,
         _bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
         _window: &mut Window<'_>,
@@ -467,6 +520,7 @@ impl Element for AbsoluteText {
 
     fn paint(
         &mut self,
+        _id: Option<GlobalElementId>,
         bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
@@ -496,7 +550,11 @@ impl Element for Label {
     type RequestLayoutState = TextRequestLayoutState;
     type PrepaintState = ();
 
-    fn request_layout(&mut self, window: &mut Window<'_>) -> (NodeId, Self::RequestLayoutState) {
+    fn request_layout(
+        &mut self,
+        _id: Option<GlobalElementId>,
+        window: &mut Window<'_>,
+    ) -> (NodeId, Self::RequestLayoutState) {
         let size = text_system::measure(&self.text, self.scale);
         let node = window
             .taffy
@@ -513,6 +571,7 @@ impl Element for Label {
 
     fn prepaint(
         &mut self,
+        _id: Option<GlobalElementId>,
         _bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
         _window: &mut Window<'_>,
@@ -522,6 +581,7 @@ impl Element for Label {
 
     fn paint(
         &mut self,
+        _id: Option<GlobalElementId>,
         bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
@@ -537,7 +597,7 @@ pub fn label(text: impl Into<String>) -> Label {
 
 pub struct Button {
     #[allow(dead_code)]
-    id: u64,
+    id: LocalElementId,
     label: String,
     scale: f32,
     padding: Size,
@@ -550,7 +610,7 @@ pub struct ButtonRequestLayoutState {
 }
 
 impl Button {
-    fn new(id: u64, label: String, scale: f32) -> Self {
+    fn new(id: LocalElementId, label: String, scale: f32) -> Self {
         Self {
             id,
             label,
@@ -571,7 +631,15 @@ impl Element for Button {
     type RequestLayoutState = ButtonRequestLayoutState;
     type PrepaintState = ();
 
-    fn request_layout(&mut self, window: &mut Window<'_>) -> (NodeId, Self::RequestLayoutState) {
+    fn id(&self) -> Option<LocalElementId> {
+        Some(self.id)
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<GlobalElementId>,
+        window: &mut Window<'_>,
+    ) -> (NodeId, Self::RequestLayoutState) {
         let text_size = text_system::measure(&self.label, self.scale);
         let size = Size::new(
             text_size.width + self.padding.width * 2.0,
@@ -592,6 +660,7 @@ impl Element for Button {
 
     fn prepaint(
         &mut self,
+        _id: Option<GlobalElementId>,
         _bounds: Rect,
         _request_layout: &mut Self::RequestLayoutState,
         _window: &mut Window<'_>,
@@ -601,6 +670,7 @@ impl Element for Button {
 
     fn paint(
         &mut self,
+        _id: Option<GlobalElementId>,
         bounds: Rect,
         request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
@@ -616,17 +686,22 @@ impl Element for Button {
 }
 
 pub fn button(id_source: &str, label: impl Into<String>) -> Button {
-    Button::new(hash_str(id_source), label.into(), 1.8)
+    Button::new(LocalElementId(hash_str(id_source)), label.into(), 1.8)
 }
 
 trait GenericElement {
-    fn request_layout(&mut self, window: &mut Window<'_>) -> NodeId;
+    fn request_layout(
+        &mut self,
+        parent_scope: Option<GlobalElementId>,
+        window: &mut Window<'_>,
+    ) -> NodeId;
     fn prepaint_from_parent(&mut self, parent_origin: Point, window: &mut Window<'_>);
     fn paint(&mut self, window: &mut Window<'_>);
 }
 
 struct ElementBox<E: Element> {
     element: E,
+    global_id: Option<GlobalElementId>,
     node_id: Option<NodeId>,
     request_layout: Option<E::RequestLayoutState>,
     prepaint: Option<E::PrepaintState>,
@@ -634,8 +709,17 @@ struct ElementBox<E: Element> {
 }
 
 impl<E: Element> GenericElement for ElementBox<E> {
-    fn request_layout(&mut self, window: &mut Window<'_>) -> NodeId {
-        let (node_id, request_layout) = self.element.request_layout(window);
+    fn request_layout(
+        &mut self,
+        parent_scope: Option<GlobalElementId>,
+        window: &mut Window<'_>,
+    ) -> NodeId {
+        let global_id = self
+            .element
+            .id()
+            .map(|local_id| window.scoped_id(parent_scope, local_id));
+        let (node_id, request_layout) = self.element.request_layout(global_id, window);
+        self.global_id = global_id;
         self.node_id = Some(node_id);
         self.request_layout = Some(request_layout);
         self.prepaint = None;
@@ -646,11 +730,16 @@ impl<E: Element> GenericElement for ElementBox<E> {
     fn prepaint_from_parent(&mut self, parent_origin: Point, window: &mut Window<'_>) {
         let node_id = self.node_id.expect("request_layout must set a node id");
         let bounds = layout_rect(&window.taffy, node_id, parent_origin);
+        if let Some(id) = self.global_id {
+            window.touch_widget(id, bounds);
+        }
         let request_layout = self
             .request_layout
             .as_mut()
             .expect("request_layout must run before prepaint");
-        let prepaint = self.element.prepaint(bounds, request_layout, window);
+        let prepaint = self
+            .element
+            .prepaint(self.global_id, bounds, request_layout, window);
         self.bounds = Some(bounds);
         self.prepaint = Some(prepaint);
     }
@@ -666,7 +755,8 @@ impl<E: Element> GenericElement for ElementBox<E> {
             .prepaint
             .as_mut()
             .expect("prepaint must run before paint");
-        self.element.paint(bounds, request_layout, prepaint, window);
+        self.element
+            .paint(self.global_id, bounds, request_layout, prepaint, window);
     }
 }
 
@@ -726,6 +816,21 @@ impl<'a> Window<'a> {
 
     pub fn bump_counter_action(&self, id_source: &str) -> UiAction {
         UiAction::BumpInt(root_id(id_source))
+    }
+
+    fn scoped_id(
+        &self,
+        parent_scope: Option<GlobalElementId>,
+        local_id: LocalElementId,
+    ) -> GlobalElementId {
+        match parent_scope {
+            Some(parent) => GlobalElementId(hash_u64(parent.0, local_id.0)),
+            None => GlobalElementId(local_id.0),
+        }
+    }
+
+    fn touch_widget(&mut self, id: GlobalElementId, rect: Rect) {
+        self.memory.touch_widget(id.0, rect);
     }
 
     pub fn draw_rect(&mut self, rect: Rect, color: Color) {
@@ -805,5 +910,12 @@ fn optional_size(size: Option<Size>) -> TaffySize<taffy::style::Dimension> {
 fn hash_str(value: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     value.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn hash_u64(a: u64, b: u64) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    a.hash(&mut hasher);
+    b.hash(&mut hasher);
     hasher.finish()
 }

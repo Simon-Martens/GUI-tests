@@ -40,6 +40,7 @@ impl Render for Demo {
             ))
             .child(
                 div()
+                    .id("panel")
                     .absolute(Point::new(260.0, 120.0))
                     .padding(18.0)
                     .gap(12.0)

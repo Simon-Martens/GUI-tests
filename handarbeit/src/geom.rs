@@ -1,6 +1,9 @@
 pub type Point = euclid::default::Point2D<f32>;
 pub type Vec2 = euclid::default::Vector2D<f32>;
 pub type Size = euclid::default::Size2D<f32>;
+
+// INFO: we use rect to store position AND size of an element: so we might be able to cache its
+// position in the whole window. This might help us in caching the layout step.
 pub type Rect = euclid::default::Box2D<f32>;
 
 pub type Color = [f32; 4];
