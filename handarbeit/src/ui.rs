@@ -471,8 +471,14 @@ impl Element for Div {
         if self.block_mouse {
             window.push_blocking_hitbox(bounds);
         }
+        if self.clip_children {
+            window.push_content_mask(bounds);
+        }
         for child in &mut self.children {
             child.prepaint_from_parent(bounds.min, window);
+        }
+        if self.clip_children {
+            window.pop_content_mask();
         }
     }
 
@@ -488,8 +494,14 @@ impl Element for Div {
             window.draw_rect(bounds, color);
         }
 
+        if self.clip_children {
+            window.push_content_mask(bounds);
+        }
         for child in &mut self.children {
             child.paint(window);
+        }
+        if self.clip_children {
+            window.pop_content_mask();
         }
     }
 }
@@ -815,7 +827,12 @@ pub struct Window<'a> {
     screen_size: Size,
     frame: u64,
     taffy: TaffyTree<()>,
+    // Hitboxes: can be clocking (no mouse events registered underneath) and/or clickable (clickable
+    // elements like buttons or links).
     hitboxes: Vec<Hitbox>,
+    // Masks: made for clipping content.
+    // TODO: GPU clipping. Right now we do it on the CPU.
+    content_masks: Vec<Rect>,
     draw_list: Vec<DrawCmd>,
 }
 
@@ -833,6 +850,7 @@ impl<'a> Window<'a> {
             // Hitboxes: can be blocking and/or clickable: blocking hitboxes prevent registering
             // click items underneath.
             hitboxes: Vec::new(),
+            content_masks: vec![Rect::from_origin_and_size(Point::origin(), screen_size)],
             draw_list: Vec::new(),
         }
     }
@@ -872,6 +890,27 @@ impl<'a> Window<'a> {
         self.memory.touch_widget(id.0, rect);
     }
 
+    fn current_content_mask(&self) -> Rect {
+        self.content_masks
+            .last()
+            .copied()
+            .unwrap_or_else(|| self.screen_rect())
+    }
+
+    fn push_content_mask(&mut self, mask: Rect) {
+        let next = self
+            .current_content_mask()
+            .intersection(&mask)
+            .unwrap_or_else(|| Rect::from_origin_and_size(mask.min, Size::new(0.0, 0.0)));
+        self.content_masks.push(next);
+    }
+
+    fn pop_content_mask(&mut self) {
+        if self.content_masks.len() > 1 {
+            self.content_masks.pop();
+        }
+    }
+
     fn push_clickable_hitbox(
         &mut self,
         id: GlobalElementId,
@@ -882,7 +921,7 @@ impl<'a> Window<'a> {
         self.hitboxes.push(Hitbox {
             id: Some(id),
             rect,
-            content_mask: self.screen_rect(),
+            content_mask: self.current_content_mask(),
             behavior: HitboxBehavior::Clickable,
             on_click: action,
         });
@@ -893,23 +932,29 @@ impl<'a> Window<'a> {
         self.hitboxes.push(Hitbox {
             id: None,
             rect,
-            content_mask: self.screen_rect(),
+            content_mask: self.current_content_mask(),
             behavior: HitboxBehavior::BlockMouse,
             on_click: None,
         });
     }
 
     pub fn draw_rect(&mut self, rect: Rect, color: Color) {
-        self.draw_list.push(DrawCmd::Rect { rect, color });
+        if let Some(rect) = rect.intersection(&self.current_content_mask()) {
+            self.draw_list.push(DrawCmd::Rect { rect, color });
+        }
     }
 
     pub fn draw_text(&mut self, pos: Point, text: impl Into<String>, scale: f32, color: Color) {
+        let clip_rect = self.current_content_mask();
+        if clip_rect.width() <= 0.0 || clip_rect.height() <= 0.0 {
+            return;
+        }
         self.draw_list.push(DrawCmd::Text {
             pos,
             text: text.into(),
             scale,
             color,
-            clip_rect: None,
+            clip_rect: Some(clip_rect),
         });
     }
 
