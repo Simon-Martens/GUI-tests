@@ -117,6 +117,8 @@ impl<V: Render> App<V> {
         // - input state
         // - window data (currently just wxh)
         // - the memory of ui elements of last state
+        // - a layout tree
+        // TODO: see that we can reuse old windows, not having to allocate again
         let mut ui_window = Window::new(
             &mut self.memory,
             &self.input,

@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use taffy::prelude::{
-    AvailableSpace, NodeId, Position, Rect as TaffyRect, Size as TaffySize, Style, TaffyTree,
-    auto, length,
+    AvailableSpace, NodeId, Position, Rect as TaffyRect, Size as TaffySize, Style, TaffyTree, auto,
+    length,
 };
 
 use crate::geom::{Color, Point, Rect, Size};
@@ -109,6 +109,48 @@ pub trait Element: 'static {
         prepaint: &mut Self::PrepaintState,
         window: &mut Window<'_>,
     );
+}
+
+// This helps with quiet type conversion and hinding of the AnyElement() thing for outside
+// libraries. It will allow for any element top be quietly converted into AnyElement behind the
+// scenes without being too early or visible to the user (this lib can just into() it, and if
+// the conversion is more complicated we can custom implement into_any_element()).
+pub trait IntoElement {
+    fn into_any_element(self) -> AnyElement;
+}
+
+impl<T: Element> IntoElement for T {
+    fn into_any_element(self) -> AnyElement {
+        AnyElement::new(self)
+    }
+}
+
+impl IntoElement for AnyElement {
+    fn into_any_element(self) -> AnyElement {
+        self
+    }
+}
+
+// This struct will be helpful: if the extend function is implemented we will get child() and
+// children functions(), so that any element that is able to contain others can implement it.
+pub trait ParentElement {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>);
+
+    fn child(mut self, child: impl IntoElement) -> Self
+    where
+        Self: Sized,
+    {
+        self.extend(std::iter::once(child.into_any_element()));
+        self
+    }
+
+    fn children(mut self, children: impl IntoIterator<Item = impl IntoElement>) -> Self
+    where
+        Self: Sized,
+    {
+        self.extend(children.into_iter().map(IntoElement::into_any_element));
+        self
+    }
 }
 
 pub struct Quad {
@@ -221,8 +263,8 @@ impl AnyElement {
     }
 }
 
-pub fn quad(rect: Rect, color: Color) -> AnyElement {
-    AnyElement::new(Quad::new(rect, color))
+pub fn quad(rect: Rect, color: Color) -> Quad {
+    Quad::new(rect, color)
 }
 
 trait GenericElement {
@@ -296,6 +338,8 @@ pub struct Window<'a> {
     draw_list: Vec<DrawCmd>,
 }
 
+// Window stores transient state and gets recreated eevery frame.
+// TODO: we have to reuse old state objects and not allocate this every frame.
 impl<'a> Window<'a> {
     pub fn new(memory: &'a mut UiMemory, input: &'a InputState, screen_size: Size) -> Self {
         let frame = memory.frame;
