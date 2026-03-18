@@ -233,6 +233,7 @@ fn tessellate(draw_list: &[DrawCmd], width: f32, height: f32) -> Vec<Vertex> {
     vertices
 }
 
+// TODO: this is icredibly slow
 fn push_text(
     vertices: &mut Vec<Vertex>,
     pos: Point,

@@ -334,6 +334,10 @@ where
 // 'static = cant store things in a struct that implements Render, which has it's own short lifetime
 // and therefore determines the lifetime of the struct. It must be afully self-contained lifetime.
 // It must contain only 'static data (like most primitive structs do).
+// NOTE: we have plastered Action everywhere to allow for message passing on certain hover / click
+// etc. events to be handled by the state driver of the application. This is not very optimal since
+// it confuse rendering the View with message parsing & state management, but rn I do not see a
+// better way.
 pub trait View: 'static {
     type Action: 'static;
 
