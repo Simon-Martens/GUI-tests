@@ -95,7 +95,7 @@ impl GpuState {
             vertex: wgpu::VertexState {
                 module: &rect_shader,
                 entry_point: Some("vs_main"),
-                buffers: &[SolidVertex::layout()],
+                buffers: &[RectInstance::layout()],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -218,18 +218,18 @@ impl GpuState {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let (rect_vertices, text_batches) = self.tessellate(
+        let (rect_instances, text_batches) = self.tessellate(
             draw_list,
             self.config.width as f32,
             self.config.height as f32,
         );
 
         // TODO: reuse vertex and text buffers
-        let rect_vertex_buffer = (!rect_vertices.is_empty()).then(|| {
+        let rect_vertex_buffer = (!rect_instances.is_empty()).then(|| {
             self.device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("rect vertices"),
-                    contents: bytemuck::cast_slice(&rect_vertices),
+                    label: Some("rect instances"),
+                    contents: bytemuck::cast_slice(&rect_instances),
                     usage: wgpu::BufferUsages::VERTEX,
                 })
         });
@@ -283,7 +283,7 @@ impl GpuState {
             if let Some(rect_vertex_buffer) = &rect_vertex_buffer {
                 pass.set_pipeline(&self.rect_pipeline);
                 pass.set_vertex_buffer(0, rect_vertex_buffer.slice(..));
-                pass.draw(0..rect_vertices.len() as u32, 0..1);
+                pass.draw(0..6, 0..rect_instances.len() as u32);
             }
 
             if !text_buffers.is_empty() {
@@ -308,14 +308,14 @@ impl GpuState {
         draw_list: &[DrawCmd],
         width: f32,
         height: f32,
-    ) -> (Vec<SolidVertex>, Vec<Vec<TextInstance>>) {
-        let mut rect_vertices = Vec::new();
+    ) -> (Vec<RectInstance>, Vec<Vec<TextInstance>>) {
+        let mut rect_instances = Vec::new();
         let mut text_batches: Vec<Vec<TextInstance>> = Vec::new();
 
         for cmd in draw_list {
             match cmd {
                 DrawCmd::Rect { rect, color } => {
-                    push_rect(&mut rect_vertices, *rect, *color, width, height);
+                    push_rect(&mut rect_instances, *rect, *color, width, height);
                 }
                 DrawCmd::Text {
                     pos,
@@ -334,7 +334,7 @@ impl GpuState {
             }
         }
 
-        (rect_vertices, text_batches)
+        (rect_instances, text_batches)
     }
 
     fn push_text(
@@ -380,6 +380,7 @@ impl GpuState {
             );
 
             let Some((clipped_rect, uv_min, uv_max)) =
+                // Here we clip the text if it doesnt fit its container
                 clip_textured_rect(rect, cached.uv_min, cached.uv_max, clip_rect)
             else {
                 continue;
@@ -496,18 +497,15 @@ impl GpuState {
     }
 }
 
-fn push_rect(vertices: &mut Vec<SolidVertex>, rect: Rect, color: Color, width: f32, height: f32) {
+fn push_rect(instances: &mut Vec<RectInstance>, rect: Rect, color: Color, width: f32, height: f32) {
     let min = to_ndc(rect.min, width, height);
     let max = to_ndc(rect.max, width, height);
 
-    vertices.extend_from_slice(&[
-        SolidVertex::new([min.x, min.y], color),
-        SolidVertex::new([min.x, max.y], color),
-        SolidVertex::new([max.x, min.y], color),
-        SolidVertex::new([max.x, min.y], color),
-        SolidVertex::new([min.x, max.y], color),
-        SolidVertex::new([max.x, max.y], color),
-    ]);
+    instances.push(RectInstance {
+        min: [min.x, min.y],
+        max: [max.x, max.y],
+        color,
+    });
 }
 
 fn clip_textured_rect(
@@ -643,32 +641,24 @@ impl AtlasPage {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-struct SolidVertex {
-    position: [f32; 2],
+struct RectInstance {
+    min: [f32; 2],
+    max: [f32; 2],
     color: [f32; 4],
 }
 
-impl SolidVertex {
-    fn new(position: [f32; 2], color: Color) -> Self {
-        Self { position, color }
-    }
-
+impl RectInstance {
     fn layout() -> wgpu::VertexBufferLayout<'static> {
+        const ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![
+            0 => Float32x2,
+            1 => Float32x2,
+            2 => Float32x4
+        ];
+
         wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<SolidVertex>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
-                    offset: 0,
-                    shader_location: 0,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    offset: std::mem::size_of::<[f32; 2]>() as u64,
-                    shader_location: 1,
-                },
-            ],
+            array_stride: std::mem::size_of::<RectInstance>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &ATTRIBUTES,
         }
     }
 }
@@ -701,6 +691,8 @@ impl TextInstance {
     }
 }
 
+// This is the most simple shader possible: it just basically outputs what was input.
+// Same color, same stuff. It just cuts up a rectangle into two triangles.
 const RECT_SHADER: &str = r#"
 struct VsOut {
     @builtin(position) position: vec4<f32>,
@@ -709,11 +701,22 @@ struct VsOut {
 
 @vertex
 fn vs_main(
-    @location(0) position: vec2<f32>,
-    @location(1) color: vec4<f32>,
+    @builtin(vertex_index) vertex_index: u32,
+    @location(0) min: vec2<f32>,
+    @location(1) max: vec2<f32>,
+    @location(2) color: vec4<f32>,
 ) -> VsOut {
+    let positions = array<vec2<f32>, 6>(
+        vec2<f32>(min.x, min.y),
+        vec2<f32>(min.x, max.y),
+        vec2<f32>(max.x, min.y),
+        vec2<f32>(max.x, min.y),
+        vec2<f32>(min.x, max.y),
+        vec2<f32>(max.x, max.y),
+    );
+
     var out: VsOut;
-    out.position = vec4<f32>(position, 0.0, 1.0);
+    out.position = vec4<f32>(positions[vertex_index], 0.0, 1.0);
     out.color = color;
     return out;
 }
@@ -724,6 +727,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
+// This draws our rectangle AND the glyph rectangle on top.
+// Then the fragment shader samples our glyph atlas texture to draw
+// the texture for the glyph recctangle (using the data of the glyph
+// atlas as an alpha channel). Note that freetype does anti-aliasing:
+// so we have values 0-255 as the alpha channel.
 const TEXT_SHADER: &str = r#"
 @group(0) @binding(0) var atlas: texture_2d<f32>;
 @group(0) @binding(1) var atlas_sampler: sampler;
