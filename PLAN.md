@@ -174,6 +174,9 @@ These are possible ideas, but currently low-priority and not clearly more practi
 These are intentionally out of scope for the initial rebuild, but they are the next rendering upgrades to make after the MVP is stable.
 
 ### Next Step 1. Replace Pixel-Rect Text With Atlas Sprites
+Status:
+- complete: grayscale glyph atlas text is now implemented with HarfBuzz shaping, FreeType rasterization, and atlas-backed glyph quads instead of per-pixel rect expansion
+
 Goal:
 - stop expanding every glyph pixel into a tiny rectangle
 - move toward the GPUI-style text path
@@ -219,7 +222,44 @@ Expected architectural changes:
 - renderer consumes the finalized scene/batches
 - clipping should move toward a scene-level concept instead of staying baked into individual commands
 
-### Next Step 3. Introduce an App / Entity / Context Ownership Model
+### Next Step 3. Add More GPU-Native Primitives and Specialized Shaders
+Goal:
+- grow beyond solid quads and text sprites without jumping straight to a full Zed-scale renderer
+- add richer visual capabilities only when they are justified by concrete UI needs
+
+Implement:
+- extend the scene with a few additional primitive families that are still practical for this codebase, for example:
+  - rounded or bordered quads as a first-class GPU primitive instead of CPU-side decomposition
+  - optional shadow primitives if panels or popups need them
+  - optional image or polychrome sprite primitives if non-text atlas content becomes necessary
+  - optional underline or highlight primitives if text-adjacent decoration becomes necessary
+- add dedicated render pipelines and shader entry points per primitive family instead of forcing one generic shader to handle everything
+- keep common WGSL utility code shared across primitive shaders where practical, such as:
+  - clip-distance helpers
+  - color conversion helpers
+  - gamma or alpha helpers when text and sprites need them
+- drive all additions from actual primitive needs in `handarbeit`, not from a goal of matching Zed feature-for-feature
+
+Why this is next:
+- once a real scene and batch model exists, new primitives can be added cleanly without distorting the UI phase model
+- this is the point where shader complexity starts to become useful, because the renderer finally has stable primitive boundaries to target
+- richer primitives are the real reason to write more advanced shaders; copying them earlier would mostly add complexity without a matching scene model
+
+Expected architectural changes:
+- `Scene` gains more primitive buckets beyond solid quads and text sprites
+- `WgpuRenderer` gains additional pipelines, bind layouts, and batch handling branches
+- shader complexity grows in a controlled way around specific primitive families rather than one monolithic "do everything" shader
+- clipping, transforms, and antialiasing logic can gradually move from CPU-side approximation into primitive-specific shader code where justified
+
+Important constraint:
+- do not copy Zed's shader files wholesale into this project just because they exist
+- instead, copy only isolated ideas or math when a new `handarbeit` primitive truly needs them, for example:
+  - rounded-rect or border distance math
+  - text gamma/contrast correction ideas
+  - shadow falloff math
+- avoid importing shader code for primitives that do not yet exist in this renderer, such as complex paths or full Zed-style sprite classes
+
+### Next Step 4. Introduce an App / Entity / Context Ownership Model
 Goal:
 - stop treating the app as one retained root object plus ad hoc UI memory
 - separate long-lived application state from frame-local window state and element-local transient state
@@ -261,7 +301,7 @@ Possible minimal starting shape:
 - `Context<T>` is the scoped mutation/read helper handed to retained views
 - root window stores one retained root view handle instead of a raw `Demo` value
 
-### Next Step 4. Add Retained Render Subtree Caching
+### Next Step 5. Add Retained Render Subtree Caching
 Goal:
 - reuse previously produced layout/prepaint/paint output for stable retained subtrees
 - move beyond full-frame regeneration without introducing screen-tile caching
@@ -304,7 +344,7 @@ Expected architectural changes:
 - scene output can be replayed from the previous frame for cached subtrees
 - hitboxes, cursor state, and input handlers remain tied to reused prepaint/paint output
 
-### Next Step 5. Add Dirty / Invalidation-Driven Redraw
+### Next Step 6. Add Dirty / Invalidation-Driven Redraw
 Goal:
 - stop rebuilding frames continuously when nothing changed
 - redraw only when input, window state, or retained app state invalidates the frame
@@ -330,7 +370,7 @@ Why this is next:
 - it reduces work immediately without changing the UI phase model
 - finer-grained invalidation can come later with retained entities/views
 
-### Next Step 6. Add Optional Debug Frame Timing
+### Next Step 7. Add Optional Debug Frame Timing
 Goal:
 - measure how long a frame takes without baking frame counters into the UI itself
 - make frame timing opt-in through a debug setting
@@ -369,7 +409,7 @@ Why this is next:
 - it gives immediate visibility into frame cost while keeping debugging concerns out of the UI model
 - it is cheap to add and useful while developing the later performance steps
 
-### Next Step 7. Add Stutter-Resistant Latest-State Frame Scheduling
+### Next Step 8. Add Stutter-Resistant Latest-State Frame Scheduling
 Goal:
 - avoid trying to "catch up" by effectively replaying missed frames after a short stall
 - make the UI recover by rendering the newest state once CPU time becomes available again
@@ -394,7 +434,7 @@ Why this is next:
 - for GUI workloads, jumping to the latest state is usually less noticeable than replaying intermediate updates
 - it complements dirty/invalidation-driven redraw instead of replacing it
 
-### Next Step 8. Add Vector Path Primitives and Tessellation
+### Next Step 9. Add Vector Path Primitives and Tessellation
 Goal:
 - support non-rectangular vector primitives without hand-writing custom tessellation code
 - move beyond quads and text sprites when the renderer needs true paths
@@ -422,7 +462,7 @@ Why this is next:
 - it becomes much more useful once a richer scene exists
 - it is optional unless the UI starts needing real vector geometry
 
-### Next Step 9. Evaluate a Skia-Backed Renderer
+### Next Step 10. Evaluate a Skia-Backed Renderer
 Goal:
 - allow the renderer backend to target a mature 2D GPU engine instead of being tied to `wgpu`
 - support high-quality text, paths, shadows, clipping, and layers through a well-established graphics stack
@@ -450,7 +490,7 @@ Why this is next:
 - it keeps the renderer replaceable while letting the higher-level UI architecture stay the same
 - this is especially attractive if Vulkan, OpenGL, Metal, or other native backends are acceptable
 
-### Next Step 10. Evaluate Enum-Based `AnyElement` To Remove Dynamic Dispatch
+### Next Step 11. Evaluate Enum-Based `AnyElement` To Remove Dynamic Dispatch
 Goal:
 - determine whether `AnyElement` should stay a trait-object wrapper or become a closed enum
 - remove dynamic dispatch and trait-object allocation from the hot element path if the element set stays small

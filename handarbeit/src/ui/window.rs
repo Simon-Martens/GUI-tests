@@ -2,6 +2,7 @@ use taffy::prelude::{NodeId, TaffyTree};
 
 use crate::geom::Color;
 use crate::gpu::DrawCmd;
+use crate::text::TextLayout;
 
 use super::*;
 
@@ -238,15 +239,14 @@ impl<'a, Action: 'static> Window<'a, Action> {
         }
     }
 
-    pub fn draw_text(&mut self, pos: Point, text: impl Into<String>, scale: f32, color: Color) {
+    pub fn draw_text(&mut self, pos: Point, layout: TextLayout, color: Color) {
         let clip_rect = self.current_content_mask();
         if clip_rect.width() <= 0.0 || clip_rect.height() <= 0.0 {
             return;
         }
         self.draw_list.push(DrawCmd::Text {
             pos,
-            text: text.into(),
-            scale,
+            layout,
             color,
             clip_rect: Some(clip_rect),
         });

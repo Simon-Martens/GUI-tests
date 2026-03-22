@@ -33,7 +33,7 @@ impl<Action: 'static> Text<Action> {
 }
 
 impl<Action: 'static> Element<Action> for Text<Action> {
-    type RequestLayoutState = ();
+    type RequestLayoutState = text_system::TextLayout;
     type PrepaintState = ();
 
     fn request_layout(
@@ -41,7 +41,8 @@ impl<Action: 'static> Element<Action> for Text<Action> {
         _id: Option<GlobalElementId>,
         window: &mut Window<'_, Action>,
     ) -> (NodeId, Self::RequestLayoutState) {
-        let size = text_system::measure(&self.text, self.scale);
+        let layout = text_system::layout(&self.text, self.scale);
+        let size = text_system::measure_layout(&layout);
         let style = match self.position {
             Some(pos) => absolute_leaf_style(pos, size),
             None => Style {
@@ -53,7 +54,7 @@ impl<Action: 'static> Element<Action> for Text<Action> {
             },
         };
         let node = window.taffy.new_leaf(style).expect("create text node");
-        (node, ())
+        (node, layout)
     }
 
     fn prepaint(
@@ -70,11 +71,11 @@ impl<Action: 'static> Element<Action> for Text<Action> {
         &mut self,
         _id: Option<GlobalElementId>,
         bounds: Rect,
-        _request_layout: &mut Self::RequestLayoutState,
+        request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
         window: &mut Window<'_, Action>,
     ) {
-        window.draw_text(bounds.min, &self.text, self.scale, self.color);
+        window.draw_text(bounds.min, request_layout.clone(), self.color);
     }
 }
 

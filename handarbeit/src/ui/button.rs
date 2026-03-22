@@ -15,6 +15,7 @@ pub struct Button<Action: 'static> {
 
 pub struct ButtonRequestLayoutState {
     text_size: Size,
+    text_layout: text_system::TextLayout,
 }
 
 impl<Action: 'static> Button<Action> {
@@ -47,7 +48,8 @@ impl<Action: 'static> Element<Action> for Button<Action> {
         _id: Option<GlobalElementId>,
         window: &mut Window<'_, Action>,
     ) -> (NodeId, Self::RequestLayoutState) {
-        let text_size = text_system::measure(&self.label, self.scale);
+        let text_layout = text_system::layout(&self.label, self.scale);
+        let text_size = text_system::measure_layout(&text_layout);
         let size = Size::new(
             text_size.width + self.padding.width * 2.0,
             text_size.height + self.padding.height * 2.0,
@@ -62,7 +64,13 @@ impl<Action: 'static> Element<Action> for Button<Action> {
                 ..Default::default()
             })
             .expect("create button node");
-        (node, ButtonRequestLayoutState { text_size })
+        (
+            node,
+            ButtonRequestLayoutState {
+                text_size,
+                text_layout,
+            },
+        )
     }
 
     fn prepaint(
@@ -100,7 +108,11 @@ impl<Action: 'static> Element<Action> for Button<Action> {
             bounds.min.x + self.padding.width,
             bounds.min.y + (bounds.height() - request_layout.text_size.height) * 0.5,
         );
-        window.draw_text(text_pos, &self.label, self.scale, rgb(0.95, 0.96, 0.98));
+        window.draw_text(
+            text_pos,
+            request_layout.text_layout.clone(),
+            rgb(0.95, 0.96, 0.98),
+        );
     }
 }
 
